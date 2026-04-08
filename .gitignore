@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+
+# Build / dist
+build/
+dist/
+*.exe
+*.spec
+*.pkg
+*.toc
+*.log
+
+# PyInstaller / PyArmor
+.pyinstaller/
+pyarmor_runtime_*/
+
+# IDE
+.vscode/
+.idea/
+.qodo/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Backups
+*.bak
+*.zip
+*.rar
