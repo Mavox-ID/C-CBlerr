@@ -183,7 +183,8 @@ class Lexer:
         self.indent_stack: List[int] = [0]
         self.errors: List[Tuple[int, int, str]] = []
         self.recovery_mode: bool = False
-
+        self.nesting_level: int = 0
+        
     def current_char(self) -> Optional[str]:
         return self.source[self.pos] if self.pos < len(self.source) else None
 
@@ -352,9 +353,13 @@ class Lexer:
                 continue
             if char == '\n':
                 self.advance()
+                if self.nesting_level > 0:
+                    continue
+    
                 self.tokens.append(Token(TokenType.NEWLINE, None, self.line, self.column - 1))
                 at_line_start = True
                 continue
+
             if char == '#':
                 self.skip_comment()
                 continue
@@ -471,6 +476,12 @@ class Lexer:
                 token_type = self.SINGLE_CHAR_TOKENS[char]
                 self.advance()
                 self.tokens.append(Token(token_type, char, self.line, col))
+                
+                if char in '([{':
+                    self.nesting_level += 1
+                elif char in ')]}':
+                    if self.nesting_level > 0:
+                        self.nesting_level -= 1
             else:
                 self.advance()
                 self._add_error(f"Неизвестный символ '{char}' на строке {self.line}, колонка {col}")
