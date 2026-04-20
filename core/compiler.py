@@ -7,13 +7,12 @@ from core.flux_ast import (
     MatchStmt, Case, ForLoop, AddressOf, SizeOf
 )
 from core.debugger import get_debugger
-# TypeChecker temporarily disabled to avoid halting compilation flow
 # try:
 #     from core.type_checker import TypeChecker, SemanticError
 # except Exception:
-TypeChecker = None
-class SemanticError(Exception):
-    pass
+#TypeChecker = None
+#class SemanticError(Exception):
+#    pass
 
 class Compiler:
 
@@ -24,6 +23,7 @@ class Compiler:
         'int64': ir.IntType(64),
         'float': ir.FloatType(),
         'f32': ir.FloatType(),
+        'f64': ir.DoubleType(),
         'bool': ir.IntType(1),
         'str': ir.PointerType(ir.IntType(8)),
         'void': ir.VoidType(),
@@ -57,6 +57,52 @@ class Compiler:
         if flux_type is None:
             return ir.VoidType()
 
+        # function type: fn(param_types)->ret
+        if isinstance(flux_type, str) and flux_type.startswith('fn('):
+            # parse signature 'fn(...)->ret'
+            sig = flux_type
+            start = sig.find('(')
+            pos = start + 1
+            depth = 1
+            while pos < len(sig) and depth > 0:
+                ch = sig[pos]
+                if ch == '(':
+                    depth += 1
+                elif ch == ')':
+                    depth -= 1
+                pos += 1
+            params_section = sig[start+1:pos-1].strip()
+            rest = sig[pos:].strip()
+            ret = 'void'
+            if rest.startswith('->'):
+                ret = rest[2:]
+
+            # split params at top level
+            params = []
+            if params_section:
+                cur = ''
+                pdepth = 0
+                gdepth = 0
+                for ch in params_section:
+                    if ch == '<':
+                        gdepth += 1; cur += ch
+                    elif ch == '>':
+                        gdepth -= 1; cur += ch
+                    elif ch == '(':
+                        pdepth += 1; cur += ch
+                    elif ch == ')':
+                        pdepth -= 1; cur += ch
+                    elif ch == ',' and pdepth == 0 and gdepth == 0:
+                        params.append(cur.strip()); cur = ''
+                    else:
+                        cur += ch
+                if cur.strip():
+                    params.append(cur.strip())
+
+            llvm_params = [self.get_llvm_type(p) for p in params]
+            llvm_ret = self.get_llvm_type(ret) if ret else ir.VoidType()
+            return ir.FunctionType(llvm_ret, llvm_params)
+
         if isinstance(flux_type, str) and flux_type.startswith('*'):
             inner_type_str = flux_type[1:]
 
@@ -79,7 +125,6 @@ class Compiler:
 
     def compile(self, program: Program) -> ir.Module:
 
-        # TypeChecker временно отключён - может прерывать процесс компиляции
         # try:
         #     tc = TypeChecker(self.debugger)
         #     tc.check(program)
@@ -396,7 +441,7 @@ class Compiler:
 
         if for_stmt.iter_var and for_stmt.iter_expr:
             iter_expr = for_stmt.iter_expr
-            if isinstance(iter_expr, Call) and iter_expr.func_name == 'range' and len(iter_expr.args) >= 2:
+            if isinstance(iter_expr, Call) and isinstance(iter_expr.func_name, str) and iter_expr.func_name == 'range' and len(iter_expr.args) >= 2:
                 start_val = self.compile_expression(iter_expr.args[0])
                 end_val = self.compile_expression(iter_expr.args[1])
 
@@ -545,10 +590,7 @@ class Compiler:
             global_var = self.global_vars[var.name]
             return self.builder.load(global_var, name=var.name)
 
-        raise NameError(f"Переменная '{var.name}' не определена") #сука далдбаеб бляяя еблан ббы ыыы гуугггугугу ыггоыоыовоыфвфывфывфываааа ааааааааааааа
-
-    def compile_binary_op(self, op: BinaryOp) -> ir.Value:
-
+        raise NameError(f"Переменная '{var.name}' не определена") #сука далдбаеб бляяя еблан ббы ыыы гуугггугугу ыггоыоыовоыфвфывфывфываааа ааааааааааааа. Вот блять еблан бля я не могу больше с этим работать, я уже 10 минут пытаюсь написать эту хуйню и vscode продолжает вставлять всякую хуйню вместо того что я пишу, я уже не могу это терпеть, я просто хочу закончить этот код и пойти спать
         left = self.compile_expression(op.left)
         right = self.compile_expression(op.right)
 
@@ -651,7 +693,9 @@ class Compiler:
 
         if declared_type_str and isinstance(self.get_llvm_type(declared_type_str), ir.PointerType):
             alloc_ty = self.get_llvm_type(declared_type_str)
-            if isinstance(value, ir.Constant) and isinstance(value.type, ir.IntType) and int(value.constant) == 0:
+            if isinstance(value, ir.Function) and isinstance(alloc_ty.pointee, ir.FunctionType):
+                stored_value = self.builder.bitcast(value, alloc_ty)
+            elif isinstance(value, ir.Constant) and isinstance(value.type, ir.IntType) and int(value.constant) == 0:
                 stored_value = ir.Constant(alloc_ty, None)
 
         self.builder.store(stored_value, alloca)
@@ -710,15 +754,6 @@ class Compiler:
         builder.position_at_end(merge_block)
 
     def compile_call(self, call: Call) -> ir.Value:
-
-        func = None
-        for f in self.module.functions:
-            if f.name == call.func_name:
-                func = f
-                break
-        if func is None:
-            raise NameError(f"Функция '{call.func_name}' не найдена")
-
         args = []
         for arg_expr in call.args:
             arg_val = self.compile_expression(arg_expr)
@@ -729,7 +764,42 @@ class Compiler:
             else:
                 args.append(arg_val)
 
-        return self.builder.call(func, args, name=f"call_{call.func_name}")
+        if isinstance(call.func_name, str):
+            func = None
+            for f in self.module.functions:
+                if f.name == call.func_name:
+                    func = f
+                    break
+            if func is None:
+                raise NameError(f"Функция '{call.func_name}' не найдена")
+            return self.builder.call(func, args, name=f"call_{call.func_name}")
+
+        callee_val = self.compile_expression(call.func_name)
+
+        if isinstance(callee_val, ir.Function):
+            return self.builder.call(callee_val, args, name=f"call_{callee_val.name}")
+
+        if isinstance(callee_val.type, ir.PointerType) and isinstance(callee_val.type.pointee, ir.FunctionType):
+            return self.builder.call(callee_val, args, name=f"call_ptr")
+
+        declared_ft = None
+        if isinstance(call.func_name, Variable):
+            for ctx in reversed(self.function_context):
+                if call.func_name.name in ctx['symbols']:
+                    sym = ctx['symbols'][call.func_name.name]
+                    declared = sym.get('type') if isinstance(sym, dict) else None
+                    if isinstance(declared, str) and declared.startswith('*fn('):
+                        declared_inner = declared[1:]
+                        declared_ft = self.get_llvm_type(declared_inner)
+                    break
+
+        if declared_ft is not None:
+            target_ptr_ty = ir.PointerType(declared_ft)
+            if not (isinstance(callee_val.type, ir.PointerType) and callee_val.type.pointee == declared_ft):
+                callee_val = self.builder.bitcast(callee_val, target_ptr_ty)
+            return self.builder.call(callee_val, args, name=f"call_ptr")
+
+        raise NameError("Каллера не является функцией или указателем на функцию")
 
     def compile_field_access(self, fa: FieldAccess) -> ir.Value:
         obj_ptr = self.compile_expression(fa.obj)
@@ -905,6 +975,9 @@ class Compiler:
                     return sym['ptr'] if isinstance(sym, dict) else sym
             if expr.name in self.global_vars:
                 return self.global_vars[expr.name]
+            for f in self.module.functions:
+                if f.name == expr.name:
+                    return f
             raise NameError(f"Переменная '{expr.name}' не определена")
 
         if isinstance(expr, FieldAccess):
@@ -947,37 +1020,4 @@ class Compiler:
         raise NotImplementedError("AddressOf: поддерживаются только переменные, поля и элементы массива")
 
 def compile_to_llvm(program: Program, module_name: str = "cblerr_module") -> ir.Module:
-
-    # попытка выполнить мономорфизацию, если модуль доступен, а если нет то идешь нахуй, блять, еблан, ххахахаха сука как смещно хъаъхахахаха
-    try:
-        from core.monomorphizer import monomorphize
-    except Exception:
-        monomorphize = None
-
-    if monomorphize:
-        try:
-            program = monomorphize(program)
-        except Exception:
-            pass
-
-    compiler = Compiler(module_name)
-
-    if getattr(program, 'structs', None):
-        for struct_def in program.structs:
-            compiler.compile_struct_def(struct_def)
-
-    if getattr(program, 'global_vars', None):
-        for global_var in program.global_vars:
-            compiler.compile_global_var(global_var)
-
-    if getattr(program, 'functions', None):
-        for func_def in program.functions:
-            if getattr(func_def, 'is_extern', False):
-                compiler.declare_extern_function(func_def)
-
-    if getattr(program, 'functions', None):
-        for func_def in program.functions:
-            if not getattr(func_def, 'is_extern', False):
-                compiler.compile_function(func_def)
-
-    return compiler.module
+    raise RuntimeError("LLVM backend disabled in this build")

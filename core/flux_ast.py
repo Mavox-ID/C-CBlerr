@@ -42,6 +42,7 @@ class Assign:
 @dataclass
 class Return:
     value: Any | None = None
+    is_endofcode: bool = False
 
 @dataclass
 class IfStmt:
@@ -64,7 +65,7 @@ class ContinueStmt:
 
 @dataclass
 class Call:
-    func_name: str
+    func_name: Any
     args: list[Any]
     type_args: list[Any] | None = None
 

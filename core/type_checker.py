@@ -13,7 +13,7 @@ class SemanticError(Exception):
 
 def _type_to_str(t: Any) -> str:
     if t is None:
-        raise SemanticError("Invalid expression type")  # fixed: self._error недоступен здесь
+        raise SemanticError("Invalid expression type") 
     if isinstance(t, str):
         return t
     if isinstance(t, GenericType):
@@ -32,6 +32,8 @@ class TypeChecker:
             'false': 'bool'
         }
 
+        self.current_return_type: str | None = None
+
         self.reserved_functions = {
             'printf', 'malloc', 'free', 'exit', 'memcpy', 'memset', 'puts', 'putchar', 'scanf'
         }
@@ -41,7 +43,10 @@ class TypeChecker:
         if node is None:
             return calls
         if isinstance(node, Call):
-            calls.add(node.func_name)
+            if isinstance(node.func_name, str):
+                calls.add(node.func_name)
+            if not isinstance(node.func_name, str):
+                calls |= self._collect_calls(node.func_name)
             for a in (node.args or []):
                 calls |= self._collect_calls(a)
             return calls
@@ -129,8 +134,12 @@ class TypeChecker:
             symbols[name] = _type_to_str(ptype)
             origins[name] = 'param'
 
+        self.current_return_type = _type_to_str(f.return_type) if f.return_type is not None else None
+
         for stmt in f.body:
             self._check_statement(stmt, symbols, origins)
+
+        self.current_return_type = None
 
     def _check_statement(self, stmt: Any, symbols: Dict[str, str], origins: Dict[str, str]) -> None:
         match stmt:
@@ -151,7 +160,9 @@ class TypeChecker:
                     tname = stmt.target
                     origins[tname] = 'local'
                     if isinstance(stmt.value, Call) and getattr(stmt.value, 'func_name', '') in ('malloc', 'calloc'):
-                        origins[tname] = 'heap'
+                        cname = stmt.value.func_name if isinstance(stmt.value.func_name, str) else (stmt.value.func_name.name if isinstance(stmt.value.func_name, Variable) else None)
+                        if cname in ('malloc', 'calloc'):
+                            origins[tname] = 'heap'
                     elif isinstance(stmt.value, ArrayLiteral):
                         origins[tname] = 'stack_array'
                     elif isinstance(stmt.value, AddressOf):
@@ -185,7 +196,28 @@ class TypeChecker:
                         v = stmt.value.name
                         if origins.get(v) in ('stack_ptr', 'stack_array'):
                             self._error("Возвращать указатель на локально выделенный массив/переменную запрещено; выделите память в куче и верните этот указатель.")
-                    self._check_expression(stmt.value, symbols, origins)
+
+                    vtype = self._check_expression(stmt.value, symbols, origins)
+                else:
+                    vtype = 'void'
+
+                if self.current_return_type is not None:
+                    expected = self.current_return_type
+                    if expected == 'void':
+                        if vtype != 'void':
+                            self._error(f"Функция объявлена как void, но return содержит значение типа {vtype}")
+                    else:
+                        if vtype == 'void':
+                            self._error(f"Функция объявлена как {expected}, но return без значения")
+                        else:
+                            if isinstance(expected, str) and isinstance(vtype, str):
+                                if expected.startswith('i') and vtype.startswith('i'):
+                                    pass
+                                elif expected != vtype:
+                                    self._error(f"Несоответствие типов возвращаемого значения: ожидается {expected}, получено {vtype}")
+                            else:
+                                if expected != vtype:
+                                    self._error(f"Несоответствие типов возвращаемого значения: ожидается {expected}, получено {vtype}")
 
             case IfStmt():
                 cond_t = self._check_expression(stmt.condition, symbols, origins)
@@ -273,6 +305,14 @@ class TypeChecker:
             if expr.name in self.globals:
                 expr.resolved_type = self.globals[expr.name]
                 return expr.resolved_type
+            if expr.name in self.functions:
+                sig = self.functions[expr.name]
+                params = sig.get('params', []) or []
+                ret = sig.get('return', None) or 'void'
+                params_str = ','.join(params)
+                fn_str = f"fn({params_str})->{ret}"
+                expr.resolved_type = fn_str
+                return expr.resolved_type
             self._error(f"Неопределенная переменная '{expr.name}'")
 
         if isinstance(expr, FieldAccess):
@@ -303,35 +343,127 @@ class TypeChecker:
             return ftype
 
         if isinstance(expr, Call):
-            if expr.func_name == 'print':
+            if isinstance(expr.func_name, str) and expr.func_name == 'print':
                 for a in (expr.args or []):
                     self._check_expression(a, symbols, origins)
                 expr.resolved_type = 'void'
                 return 'void'
 
-            if expr.func_name == 'range':
+            if isinstance(expr.func_name, str) and expr.func_name == 'range':
                 for a in expr.args:
                     self._check_expression(a, symbols, origins)
                 expr.resolved_type = 'range'
                 return 'range'
 
-            if expr.func_name == 'len':
+            if isinstance(expr.func_name, str) and expr.func_name == 'len':
                 if not expr.args or len(expr.args) != 1:
                     self._error("len() expects a single argument")
                 at = self._check_expression(expr.args[0], symbols, origins)
                 expr.resolved_type = 'int'
                 return 'int'
 
-            if expr.func_name not in self.functions:
-                self._error(f"Обращение к неизвестной функции '{expr.func_name}'")
-            sig = self.functions[expr.func_name]
-            args = expr.args or []
-            if len(args) != len(sig['params']):
-                pass
-            for i, a in enumerate(args):
-                at = self._check_expression(a, symbols, origins)
-                if i < len(sig['params']) and sig['params'][i] is not None:
-                    expected = sig['params'][i]
+            if isinstance(expr.func_name, str):
+                if expr.func_name not in self.functions:
+                    self._error(f"Обращение к неизвестной функции '{expr.func_name}'")
+                sig = self.functions[expr.func_name]
+                args = expr.args or []
+                for i, a in enumerate(args):
+                    at = self._check_expression(a, symbols, origins)
+                    if i < len(sig['params']) and sig['params'][i] is not None:
+                        expected = sig['params'][i]
+                        if at == 'str' and isinstance(expected, str) and expected.startswith('*'):
+                            ok = False
+                            if isinstance(a, FieldAccess) and a.field == 'data':
+                                ok = True
+                            if isinstance(a, CastExpr) and isinstance(a.expr, FieldAccess) and a.expr.field == 'data':
+                                ok = True
+                            if not ok:
+                                self._error(f"Передача `str` непосредственно в функцию '{expr.func_name}'; передайте `<your_string>.data как *void`, если ожидается указатель.")
+                        if at != expected:
+                            if not (isinstance(at, str) and at.startswith('i') and isinstance(expected, str) and expected.startswith('i')):
+                                self._error(f"Несоответствие типов аргументов при вызове функции '{expr.func_name}': {at} != {expected}")
+                expr.resolved_type = sig['return'] or 'void'
+                return expr.resolved_type
+
+            callee_t = self._check_expression(expr.func_name, symbols, origins)
+
+            def _parse_fn_sig(sig: str) -> tuple[list[str], str]:
+                if not sig.startswith('fn('):
+                    raise SemanticError(f"Invalid function signature: {sig}")
+                i = 3
+                depth_paren = 0
+                depth_angle = 0
+                params_buf = ''
+                while i < len(sig):
+                    c = sig[i]
+                    if c == '(':
+                        depth_paren += 1
+                        params_buf += c
+                    elif c == ')':
+                        if depth_paren == 0:
+                            break
+                        depth_paren -= 1
+                        params_buf += c
+                    else:
+                        params_buf += c
+                    i += 1
+
+                start = sig.find('(', 2)
+                if start == -1:
+                    raise SemanticError(f"Invalid function signature: {sig}")
+                pos = start + 1
+                depth = 1
+                while pos < len(sig) and depth > 0:
+                    ch = sig[pos]
+                    if ch == '(':
+                        depth += 1
+                    elif ch == ')':
+                        depth -= 1
+                    pos += 1
+                if depth != 0:
+                    raise SemanticError(f"Unbalanced parentheses in function signature: {sig}")
+                params_section = sig[start+1:pos-1].strip()
+                rest = sig[pos:].strip()
+                ret = 'void'
+                if rest.startswith('->'):
+                    ret = rest[2:]
+
+                params = []
+                if params_section:
+                    cur = ''
+                    pdepth = 0
+                    gdepth = 0
+                    for ch in params_section:
+                        if ch == '<':
+                            gdepth += 1
+                            cur += ch
+                        elif ch == '>':
+                            gdepth -= 1
+                            cur += ch
+                        elif ch == '(':
+                            pdepth += 1
+                            cur += ch
+                        elif ch == ')':
+                            pdepth -= 1
+                            cur += ch
+                        elif ch == ',' and pdepth == 0 and gdepth == 0:
+                            params.append(cur.strip())
+                            cur = ''
+                        else:
+                            cur += ch
+                    if cur.strip():
+                        params.append(cur.strip())
+                return params, ret
+
+            if isinstance(callee_t, str) and (callee_t.startswith('*fn(') or callee_t.startswith('fn(')):
+                sig_str = callee_t[1:] if callee_t.startswith('*') else callee_t
+                params, ret = _parse_fn_sig(sig_str)
+                args = expr.args or []
+                if len(args) != len(params):
+                    self._error(f"Несоответствие числа аргументов при вызове через указатель: {len(args)} != {len(params)}")
+                for i, a in enumerate(args):
+                    at = self._check_expression(a, symbols, origins)
+                    expected = params[i]
                     if at == 'str' and isinstance(expected, str) and expected.startswith('*'):
                         ok = False
                         if isinstance(a, FieldAccess) and a.field == 'data':
@@ -339,12 +471,14 @@ class TypeChecker:
                         if isinstance(a, CastExpr) and isinstance(a.expr, FieldAccess) and a.expr.field == 'data':
                             ok = True
                         if not ok:
-                            self._error(f"Передача `str` непосредственно в функцию '{expr.func_name}'; передайте `<your_string>.data как *void`, если ожидается указатель.")
+                            self._error(f"Передача `str` непосредственно в функцию-по-указателю; передайте `<your_string>.data как *void`, если ожидается указатель.")
                     if at != expected:
                         if not (isinstance(at, str) and at.startswith('i') and isinstance(expected, str) and expected.startswith('i')):
-                            self._error(f"Несоответствие типов аргументов при вызове функции '{expr.func_name}': {at} != {expected}")
-            expr.resolved_type = sig['return'] or 'void'
-            return expr.resolved_type
+                            self._error(f"Несоответствие типов аргументов при вызове через указатель: {at} != {expected}")
+                expr.resolved_type = ret or 'void'
+                return expr.resolved_type
+
+            self._error(f"Вызов на объекте не является указателем на функцию: {callee_t}")
 
         if isinstance(expr, ArrayLiteral):
             if not expr.elements:

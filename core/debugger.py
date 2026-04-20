@@ -10,6 +10,166 @@ from typing import Optional, Dict, Any, List, Tuple
 from dataclasses import dataclass
 from io import StringIO
 
+ANSI_RESET = "\033[0m"
+ANSI_RED = "\033[31m"
+ANSI_BLUE = "\033[34m"
+ANSI_YELLOW = "\033[33m"
+
+def _detect_color_support() -> bool:
+    if os.environ.get('NO_COLOR'):
+        return False
+    try:
+        if not (hasattr(sys.stdout, 'isatty') and sys.stdout.isatty()) and not (hasattr(sys.stderr, 'isatty') and sys.stderr.isatty()):
+            return False
+    except Exception:
+        pass
+    if os.name == 'nt':
+        try:
+            import ctypes
+            kernel32 = ctypes.windll.kernel32
+            STD_OUTPUT_HANDLE = -11
+            STD_ERROR_HANDLE = -12
+            handle_out = kernel32.GetStdHandle(STD_OUTPUT_HANDLE)
+            handle_err = kernel32.GetStdHandle(STD_ERROR_HANDLE)
+            mode = ctypes.c_uint32()
+            if kernel32.GetConsoleMode(handle_out, ctypes.byref(mode)) == 0:
+                if kernel32.GetConsoleMode(handle_err, ctypes.byref(mode)) == 0:
+                    return False
+            ENABLE_VT_PROCESSING = 0x0004
+            try:
+                kernel32.SetConsoleMode(handle_out, mode.value | ENABLE_VT_PROCESSING)
+            except Exception:
+                try:
+                    kernel32.SetConsoleMode(handle_err, mode.value | ENABLE_VT_PROCESSING)
+                except Exception:
+                    pass
+            return True
+        except Exception:
+            return False
+    return True
+
+COLORS_SUPPORTED = _detect_color_support()
+
+def color_red(text: str) -> str:
+    if not COLORS_SUPPORTED:
+        return text
+    return f"{ANSI_RED}{text}{ANSI_RESET}"
+
+def color_blue(text: str) -> str:
+    if not COLORS_SUPPORTED:
+        return text
+    return f"{ANSI_BLUE}{text}{ANSI_RESET}"
+
+def color_yellow(text: str) -> str:
+    if not COLORS_SUPPORTED:
+        return text
+    return f"{ANSI_YELLOW}{text}{ANSI_RESET}"
+
+def _levenshtein_distance(s1: str, s2: str) -> int:
+    if len(s1) < len(s2):
+        return _levenshtein_distance(s2, s1)
+    if len(s2) == 0:
+        return len(s1)
+    
+    previous_row = range(len(s2) + 1)
+    for i, c1 in enumerate(s1):
+        current_row = [i + 1]
+        for j, c2 in enumerate(s2):
+            insertions = previous_row[j + 1] + 1
+            deletions = current_row[j] + 1
+            substitutions = previous_row[j] + (c1 != c2)
+            current_row.append(min(insertions, deletions, substitutions))
+        previous_row = current_row
+    
+    return previous_row[-1]
+
+def _token_similarity_score(unknown: str, candidate: str) -> float:
+    unknown_lower = unknown.lower()
+    candidate_lower = candidate.lower()
+    
+    if unknown_lower == candidate_lower:
+        return 0.0
+    
+    distance = _levenshtein_distance(unknown_lower, candidate_lower)
+    max_len = max(len(unknown_lower), len(candidate_lower))
+    
+    if max_len == 0:
+        return float('inf')
+    
+    base_similarity = distance / max_len
+    
+    length_diff = abs(len(unknown_lower) - len(candidate_lower))
+    length_penalty = length_diff * 0.1
+    
+    if unknown_lower[0] == candidate_lower[0]:
+        base_similarity *= 0.85
+    
+    common_prefix = 0
+    for i in range(min(len(unknown_lower), len(candidate_lower))):
+        if unknown_lower[i] == candidate_lower[i]:
+            common_prefix += 1
+        else:
+            break
+    
+    if common_prefix > 0:
+        base_similarity *= (1.0 - common_prefix / max_len * 0.3)
+    
+    final_score = base_similarity + length_penalty
+    return final_score
+
+def _find_closest_match(identifier: str, candidates: List[str], max_distance: int = 3) -> Optional[str]:
+    closest = None
+    best_distance = max_distance + 1
+    best_score = float('inf')
+    
+    id_lower = identifier.lower()
+    id_first_char = id_lower[0] if id_lower else ''
+    
+    candidates_by_priority = []
+    
+    for candidate in candidates:
+        if len(candidate) > 0 and len(identifier) > 0:
+            cand_lower = candidate.lower()
+            dist = _levenshtein_distance(id_lower, cand_lower)
+            
+            if dist <= max_distance:
+                cand_first_char = cand_lower[0]
+                starts_same = (cand_first_char == id_first_char)
+                length_diff = abs(len(id_lower) - len(candidate))
+                
+                priority = (dist, not starts_same, length_diff, len(candidate))
+                candidates_by_priority.append((priority, candidate))
+    
+    if candidates_by_priority:
+        candidates_by_priority.sort()
+        best = candidates_by_priority[0]
+        return best[1]
+    
+    return None
+
+KNOWN_KEYWORDS = [
+    'def', 'return', 'endofcode', 'if', 'else', 'elif', 'while', 'for', 'break', 'continue',
+    'struct', 'enum', 'match', 'case', 'default', 'import', 'from', 'module', 'as',
+    'int', 'str', 'bool', 'float', 'void', 'u8', 'u16', 'u32', 'u64', 'i8', 'i16', 'i32', 'i64', 'f64',
+    'and', 'or', 'not', 'in', 'asm', 'comptime', 'let', 'const', 'extern', 'packed', 'inline',
+    'true', 'false', 'null', 'sizeof', 'print', 'printf', 'sprintf', 'scanf', 'malloc', 'calloc', 'realloc',
+    'free', 'memcpy', 'memmove', 'memset', 'strlen', 'strcpy', 'strcat', 'strcmp', 'puts', 'putchar', 'getchar',
+    'exit', 'abort', 'rand', 'srand', 'sin', 'cos', 'tan', 'sqrt', 'pow', 'abs', 'floor', 'ceil',
+    'fabs', 'fmod', 'log', 'exp', 'atan2', 'memchr', 'memmem', 'strncpy', 'strncat', 'strncmp',
+    'strstr', 'strchr', 'strrchr', 'strtok', 'atoi', 'atof', 'strtol', 'strtod', 'snprintf',
+    'vprintf', 'fprintf', 'fscanf', 'fopen', 'fclose', 'fread', 'fwrite', 'fseek', 'ftell',
+    'rewind', 'fflush', 'remove', 'rename', 'tmpfile', 'time', 'clock', 'difftime', 'mktime',
+    'getenv', 'system', 'qsort', 'bsearch', 'atexit', 'signal', 'raise',
+    'PostQuitMessage', 'CreateWindowExA', 'GetDC', 'ReleaseDC', 'ShowWindow', 'GetConsoleWindow',
+    'SetConsoleMode', 'GetConsoleMode', 'GetStdHandle', 'WriteConsole', 'ReadConsole',
+    'GetAsyncKeyState', 'Sleep', 'GetCursorPos', 'ScreenToClient', 'GetMessageA', 'DispatchMessageA',
+    'PeekMessageA', 'TranslateMessage', 'MessageBoxA', 'wWinMain', 'WinMain', 'DllMain',
+    'ExitProcess', 'GetModuleHandleA', 'GetProcAddress', 'LoadLibraryA', 'FreeLibrary',
+    'Beep', 'PlaySoundA', 'sndPlaySoundA', 'timeGetTime', 'GetTickCount',
+    'OpenFileA', 'CreateFileA', 'ReadFile', 'WriteFile', 'CloseHandle',
+    'HeapAlloc', 'HeapFree', 'GetProcessHeap'
+]
+
 class DebugLevel(IntEnum):
 
     NONE = 0
@@ -42,11 +202,11 @@ class GameDebugger: #типо игра хахахахахахах
 
     _COLORS = {
         'RESET': '\033[0m',
-        'RED': '\033[91m',
-        'YELLOW': '\033[93m',
-        'GREEN': '\033[92m',
-        'BLUE': '\033[94m',
-        'CYAN': '\033[96m',
+        'RED': '\033[31m',
+        'YELLOW': '\033[33m',
+        'GREEN': '\033[32m',
+        'BLUE': '\033[34m',
+        'CYAN': '\033[36m',
         'GRAY': '\033[90m',
     }
 
@@ -281,6 +441,127 @@ class GameDebugger: #типо игра хахахахахахах
         else:
             self.log_info("Отладочная сессия завершена успешно")
         return False
+
+    def display_syntax_error(self, exc: Exception, source: Optional[str] = None, filename: Optional[str] = None) -> None:
+
+        msg = str(exc) if exc is not None else "Ошибка"
+
+        if self.use_colors and COLORS_SUPPORTED:
+            print(color_red("[ОШИБКА]") + f" {msg}", file=sys.stderr)
+        else:
+            print(f"[ОШИБКА] {msg}", file=sys.stderr)
+
+        lineno = None
+        start_col = None
+        end_col = None
+
+        if isinstance(exc, SyntaxError):
+            lineno = getattr(exc, 'lineno', None)
+            offset = getattr(exc, 'offset', None)
+            text_attr = getattr(exc, 'text', None)
+            if offset:
+                try:
+                    start_col = int(offset) - 1
+                    end_col = start_col + 1
+                except Exception:
+                    start_col = None
+            if text_attr and not source and isinstance(text_attr, str):
+                source = text_attr
+
+        if lineno is None:
+            try:
+                import re
+                m = re.search(r'at line (\d+)', msg)
+                if not m:
+                    m = re.search(r'line (\d+)', msg)
+                if m:
+                    lineno = int(m.group(1))
+            except Exception:
+                lineno = None
+
+        if source and lineno:
+            lines = source.splitlines()
+            if 1 <= lineno <= len(lines):
+                src_line = lines[lineno - 1].rstrip('\n')
+                print(src_line, file=sys.stderr)
+
+                if start_col is None:
+                    try:
+                        import re
+                        m = re.search(r"'([^']+)'|\"([^\"]+)\"", msg)
+                        token = None
+                        if m:
+                            token = m.group(1) or m.group(2)
+                        if token:
+                            idx = src_line.find(token)
+                            if idx != -1:
+                                start_col = idx
+                                end_col = idx + len(token)
+                        if start_col is None:
+                            idx = 0
+                            while idx < len(src_line) and src_line[idx].isspace():
+                                idx += 1
+                            start_col = idx
+                            end_col = idx + 1
+                    except Exception:
+                        start_col = 0
+                        end_col = 1
+
+                if start_col is None:
+                    start_col = 0
+                if end_col is None or end_col <= start_col:
+                    end_col = start_col + 1
+
+                if start_col < 0:
+                    start_col = 0
+                if start_col > len(src_line):
+                    start_col = len(src_line)
+                if end_col > len(src_line):
+                    end_col = len(src_line)
+
+                spaces = ' ' * start_col
+                carets = '^' * max(1, end_col - start_col)
+                if self.use_colors and COLORS_SUPPORTED:
+                    print(spaces + color_blue(carets), file=sys.stderr)
+                else:
+                    print(f"{spaces}{carets}", file=sys.stderr)
+
+        try:
+            import re
+            reason = None 
+            fix = None
+            hint = None
+            
+            if re.search(r'Unknown|Неизвестн|Unexpected token|Неожиданный', msg, flags=re.I):
+                reason = 'Неверный или неожиданный фрагмент кода'
+            
+            m_unknown = re.search(r"'([^']+)'", msg)
+            if m_unknown:
+                unknown_token = m_unknown.group(1)
+                closest = _find_closest_match(unknown_token, KNOWN_KEYWORDS, max_distance=3)
+                if closest:
+                    hint = f'Возможно, вы имели в виду: "{closest}"'
+            
+            if 'endofcode' in (source or '') and 'return 0' in (source or ''):
+                fix = 'Используйте корректное ключевое слово'
+            
+            if reason:
+                if self.use_colors and COLORS_SUPPORTED:
+                    print(color_yellow("[ПРИЧИНА]") + f" {reason}", file=sys.stderr)
+                else:
+                    print(f"[ПРИЧИНА] {reason}", file=sys.stderr)
+            if fix:
+                if self.use_colors and COLORS_SUPPORTED:
+                    print(color_yellow("[КАК ИСПРАВИТЬ]") + f" {fix}", file=sys.stderr)
+                else:
+                    print(f"[КАК ИСПРАВИТЬ] {fix}", file=sys.stderr)
+            if hint:
+                if self.use_colors and COLORS_SUPPORTED:
+                    print(color_yellow("[ПОДСКАЗКА]") + f" {hint}", file=sys.stderr)
+                else:
+                    print(f"[ПОДСКАЗКА] {hint}", file=sys.stderr)
+        except Exception:
+            pass
 
 _global_debugger: Optional[GameDebugger] = None
 

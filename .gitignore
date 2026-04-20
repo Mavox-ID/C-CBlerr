@@ -2,7 +2,7 @@
 __pycache__/
 *.pyc
 
-# Build / dist
+# Build
 dist/
 *.exe
 *.spec
@@ -10,7 +10,7 @@ dist/
 *.toc
 *.log
 
-# PyInstaller / PyArmor
+# PyInstaller
 .pyinstaller/
 pyarmor_runtime_*/
 

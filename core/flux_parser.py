@@ -6,7 +6,9 @@ from core.flux_ast import (
     StructDef, FieldAccess, ArrayAccess, ArrayLiteral, LogicalOp,
     PointerType, Dereference, InlineAsm, CastExpr, Decorator, ComptimeBlock,
     MatchStmt, Case, ForLoop, EnumDef, AddressOf, SizeOf, GenericType
+    , ImportStmt, FromImportStmt
 )
+
 from core.debugger import get_debugger
 
 class Parser:
@@ -153,12 +155,35 @@ class Parser:
 
     def parse_import(self):
         self.expect(TokenType.IMPORT, "Ожидается 'import'")
-        name = self.expect(TokenType.NAME, "Ожидается имя модуля после import").value
-        return ('import', name)
+        token = self.current_token()
+        if not token:
+            raise SyntaxError("Ожидается имя модуля после import, но достигнут EOF")
+        if token.type == TokenType.STRING:
+            module_name = token.value
+            self.advance()
+        elif token.type == TokenType.NAME:
+            module_name = token.value
+            self.advance()
+        else:
+            self.debugger.log_warning("Ожидается имя или строка после import")
+            module_name = token.value if getattr(token, 'value', None) is not None else ''
+            self.advance()
+        from core.flux_ast import ImportStmt
+        return ImportStmt(module_name, None)
 
     def parse_from_import(self):
         self.expect(TokenType.FROM, "Ожидается 'from'")
-        module = self.expect(TokenType.NAME, "Ожидается имя модуля после from").value
+        token = self.current_token()
+        if not token:
+            raise SyntaxError("Ожидается имя модуля после from, но достигнут EOF")
+        if token.type == TokenType.STRING:
+            module = token.value
+            self.advance()
+        elif token.type == TokenType.NAME:
+            module = token.value
+            self.advance()
+        else:
+            raise SyntaxError("Ожидается имя или строка после from")
         self.expect(TokenType.IMPORT, "Ожидается 'import' после имени модуля")
         items = []
         while True:
@@ -168,7 +193,8 @@ class Parser:
                 self.advance()
                 continue
             break
-        return ('from', module, items)
+        from core.flux_ast import FromImportStmt
+        return FromImportStmt(module, items, None)
 
     def parse_global_var(self):
         is_const = False
@@ -379,6 +405,9 @@ class Parser:
 
         if token.type == TokenType.RETURN:
             return self.parse_return()
+        if token.type == TokenType.ENDOFCODE:
+            self.advance()
+            return Return(Literal(0, 'int'), is_endofcode=True)
         if token.type == TokenType.IF:
             return self.parse_if_stmt()
         if token.type == TokenType.WHILE:
@@ -467,6 +496,8 @@ class Parser:
                 idx = self.parse_expression()
                 self.expect(TokenType.RBRACKET, "Ожидается ']'" )
                 expr = ArrayAccess(expr, idx)
+        if self.current_token() and self.current_token().type == TokenType.LPAREN:
+            expr = self.parse_call(expr)
         return expr
 
     def parse_atom_or_access(self):
@@ -802,9 +833,12 @@ class Parser:
                 tgt = self.parse_type()
                 expr = CastExpr(expr, tgt)
 
+        if self.current_token() and self.current_token().type == TokenType.LPAREN:
+            expr = self.parse_call(expr)
+
         return expr
 
-    def parse_call(self, func_name: str, type_args: list[Any] | None = None) -> Call:
+    def parse_call(self, func_name: Any, type_args: list[Any] | None = None) -> Call:
         self.expect(TokenType.LPAREN, "Ожидается '(' после имени вызова")
         args: list[Any] = []
         if self.current_token() and self.current_token().type != TokenType.RPAREN:

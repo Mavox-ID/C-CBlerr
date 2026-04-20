@@ -251,7 +251,7 @@ def monomorphize(program: Program) -> Program:
         if isinstance(node, Call):
             node.args = [visit(a) for a in node.args]
 
-            if node.type_args:
+            if node.type_args and isinstance(node.func_name, str):
                 mangled = clone_and_instantiate_function(node.func_name, node.type_args)
                 if mangled:
                     node.func_name = mangled

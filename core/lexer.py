@@ -6,6 +6,7 @@ from pathlib import Path
 class TokenType(Enum):
     DEF = auto()
     RETURN = auto()
+    ENDOFCODE = auto()
     IF = auto()
     ELSE = auto()
     EXTERN = auto()
@@ -34,7 +35,7 @@ class TokenType(Enum):
     I16 = auto()
     I32 = auto()
     I64 = auto()
-    ASM = auto() #хахахахахахах ассемблер хахахахахахах сука какой же гений придумал это слово хахахахахахах CBLERRV4.2 - это шедевр, который будет жить вечно хахахахахахах типо C и ассемблер хахахаха только синтаксис питона хахахах поняли??? хахахахахахахахахахахахахахахаха лол 
+    ASM = auto() #хахахахахахах ассемблер хахахахахахах сука какой же гений придумал это слово хахахахахахах CBLERRV5.1 - это шедевр, который будет жить вечно хахахахахахах типо C и ассемблер хахахаха только синтаксис питона хахахах поняли??? хахахахахахахахахахахахахахахаха лол 
     COMPTIME = auto()
     AS = auto()
     PACKED = auto()
@@ -131,6 +132,7 @@ class Lexer:
         'bool': TokenType.BOOL,
         'float': TokenType.FLOAT,
         'void': TokenType.VOID,
+        'endofcode': TokenType.ENDOFCODE,
         'u8': TokenType.U8,
         'u16': TokenType.U16,
         'u32': TokenType.U32,

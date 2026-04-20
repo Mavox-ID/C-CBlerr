@@ -2,6 +2,7 @@ import sys
 import os
 import subprocess
 import tempfile
+import re
 import platform
 from pathlib import Path
 from typing import List, Optional, Tuple, Dict
@@ -64,11 +65,11 @@ from core.flux_ast import (
 )
 from core.flux_ast import MatchStmt, Case, ForLoop, EnumDef, AddressOf, SizeOf
 from core.debugger import init_debugger, get_debugger, DebugLevel
-# from core.type_checker import TypeChecker, SemanticError
 
 class CCodeGenerator:
-    def __init__(self, module_name: str = "cblerr_module"):
+    def __init__(self, module_name: str = "cblerr_module", link_mode: Optional[str] = None):
         self.module_name = module_name
+        self.link_mode = link_mode
         self.code_lines = []
         self.indent_level = 0
         self.struct_definitions = {}
@@ -82,6 +83,10 @@ class CCodeGenerator:
         self.local_vars_stack = []
 
     def generate(self, program: Program) -> str:
+        if self.link_mode == 'static':
+            self.emit_line('#define CBLERR_LINK_STATIC 1')
+        elif self.link_mode == 'dynamic':
+            self.emit_line('#define CBLERR_LINK_DYNAMIC 1')
         self.emit_line("#include <stdio.h>")
         self.emit_line("#include <stdlib.h>")
         self.emit_line("#include <string.h>")
@@ -176,12 +181,25 @@ class CCodeGenerator:
                 field_name, field_type = item
             else:
                 continue
-            c_type = self.get_c_type(field_type)
-            self.emit_line(f"{c_type} {field_name};")
+            if isinstance(field_type, str) and field_type.startswith('*fn('):
+                decl = self.get_c_declaration(field_type, field_name)
+                self.emit_line(f"{decl};")
+            else:
+                c_type = self.get_c_type(field_type)
+                self.emit_line(f"{c_type} {field_name};")
         self.indent_level -= 1
         self.emit_line("};")
 
     def generate_global_var(self, global_var):
+        if isinstance(global_var.var_type, str) and global_var.var_type.startswith('*fn('):
+            decl = self.get_c_declaration(global_var.var_type, global_var.name)
+            self.global_vars[global_var.name] = global_var
+            if hasattr(global_var, 'value') and global_var.value:
+                value_code = self.generate_expression(global_var.value)
+                self.emit_line(f"{decl} = {value_code};")
+            else:
+                self.emit_line(f"{decl};")
+            return
         c_type = self.get_c_type(global_var.var_type)
         if hasattr(global_var, 'var_type') and hasattr(global_var.var_type, 'name') and getattr(global_var.var_type, 'name', None) == 'array':
             inner = global_var.var_type.args[0] if getattr(global_var.var_type, 'args', None) else 'int'
@@ -209,8 +227,11 @@ class CCodeGenerator:
             for param_tuple in func_def.params:
                 if isinstance(param_tuple, tuple) and len(param_tuple) >= 2:
                     param_name, param_type = param_tuple[0], param_tuple[1]
-                    param_c_type = self.get_c_type(param_type)
-                    params.append(f"{param_c_type} {param_name}")
+                    if isinstance(param_type, str) and param_type.startswith('*fn('):
+                        params.append(self.get_c_declaration(param_type, param_name))
+                    else:
+                        param_c_type = self.get_c_type(param_type)
+                        params.append(f"{param_c_type} {param_name}")
         params_str = ", ".join(params) if params else "void"
         return f"{return_type} {func_def.name}({params_str})"
 
@@ -230,16 +251,21 @@ class CCodeGenerator:
                 if isinstance(param_tuple, tuple) and len(param_tuple) >= 2:
                     pname, ptype = param_tuple[0], param_tuple[1]
                     try:
-                        p_c = self.get_c_type(ptype)
+                        if isinstance(ptype, str) and ptype.startswith('*fn('):
+                            p_c = self.get_c_declaration(ptype, pname)
+                        else:
+                            p_c = self.get_c_type(ptype)
                     except Exception:
                         p_c = None
                     if p_c:
                         self.local_vars_stack[-1][pname] = p_c
 
+        has_explicit_return = bool(func_def.body and isinstance(func_def.body[-1], Return))
         if func_def.body:
             for stmt in func_def.body:
                 self.generate_statement(stmt)
-        if func_def.return_type != 'void' and func_def.return_type != None:
+
+        if not has_explicit_return and func_def.return_type != 'void' and func_def.return_type is not None:
             if func_def.return_type in ['int', 'i32', 'int32']:
                 self.emit_line("return 0;")
             else:
@@ -288,10 +314,16 @@ class CCodeGenerator:
             target = assign_stmt.target
             value = self.generate_expression(assign_stmt.value)
             if hasattr(assign_stmt, 'var_type') and assign_stmt.var_type:
-                c_type = self.get_c_type(assign_stmt.var_type)
-                self.emit_line(f"{c_type} {target} = {value};")
-                if self.local_vars_stack:
-                    self.local_vars_stack[-1][target] = c_type
+                if isinstance(assign_stmt.var_type, str) and assign_stmt.var_type.startswith('*fn('):
+                    decl = self.get_c_declaration(assign_stmt.var_type, target)
+                    self.emit_line(f"{decl} = {value};")
+                    if self.local_vars_stack:
+                        self.local_vars_stack[-1][target] = decl
+                else:
+                    c_type = self.get_c_type(assign_stmt.var_type)
+                    self.emit_line(f"{c_type} {target} = {value};")
+                    if self.local_vars_stack:
+                        self.local_vars_stack[-1][target] = c_type
             else:
                 self.emit_line(f"{target} = {value};")
         else:
@@ -350,7 +382,7 @@ class CCodeGenerator:
 
         if for_stmt.iter_var and for_stmt.iter_expr:
             ie = for_stmt.iter_expr
-            if isinstance(ie, Call) and ie.func_name == 'range' and len(ie.args) >= 2:
+            if isinstance(ie, Call) and isinstance(ie.func_name, str) and ie.func_name == 'range' and len(ie.args) >= 2:
                 start = self.generate_expression(ie.args[0])
                 end = self.generate_expression(ie.args[1])
                 self.emit_line(f"for (int {for_stmt.iter_var} = {start}; {for_stmt.iter_var} < {end}; ++{for_stmt.iter_var}) {{")
@@ -377,7 +409,7 @@ class CCodeGenerator:
                 self.emit_line("}")
                 return
 
-            self.emit_line(f"// Unsupported iterator-style for; falling back to block for {for_stmt.iter_var}")
+
             self.emit_line("{")
             self.indent_level += 1
             self.emit_line("TODO: implement generic iteration")
@@ -392,7 +424,6 @@ class CCodeGenerator:
         first = True
         for case in match_stmt.cases:
             if case.values is None:
-                # default
                 if first:
                     self.emit_line("if (1) {")
                 else:
@@ -500,9 +531,10 @@ class CCodeGenerator:
             return f"({left} {op} {right})"
         
         elif isinstance(expr, Call):
-            if expr.func_name == 'print':
+            fname = expr.func_name if isinstance(expr.func_name, str) else (expr.func_name.name if isinstance(expr.func_name, Variable) else None)
+            if fname == 'print':
                 return self._generate_print_call(expr)
-            if expr.func_name == 'len':
+            if fname == 'len':
                 if not expr.args or len(expr.args) != 1:
                     return '0'
                 a = expr.args[0]
@@ -516,7 +548,11 @@ class CCodeGenerator:
 
             args = [self.generate_expression(arg) for arg in (expr.args or [])]
             args_str = ", ".join(args)
-            return f"{expr.func_name}({args_str})"
+            if isinstance(expr.func_name, str):
+                func_code = expr.func_name
+            else:
+                func_code = self.generate_expression(expr.func_name)
+            return f"{func_code}({args_str})"
         
         elif isinstance(expr, ArrayAccess):
             array = self.generate_expression(expr.arr)
@@ -676,15 +712,76 @@ class CCodeGenerator:
             inner_c_type = self.get_c_type(inner)
             return f"{inner_c_type}*"
         
-        # Структура
         if isinstance(flux_type, str) and flux_type not in type_map:
             return f"struct {flux_type}"
         
         return "int32_t"
 
+    def get_c_declaration(self, flux_type, name: str) -> str:
+        if not isinstance(flux_type, str):
+            return f"{self.get_c_type(flux_type)} {name}"
+
+        def _parse_fn_sig(sig: str) -> tuple[list[str], str]:
+            if not sig.startswith('fn('):
+                raise ValueError(f"Invalid function signature: {sig}")
+            start = sig.find('(')
+            pos = start + 1
+            depth = 1
+            while pos < len(sig) and depth > 0:
+                ch = sig[pos]
+                if ch == '(':
+                    depth += 1
+                elif ch == ')':
+                    depth -= 1
+                pos += 1
+            if depth != 0:
+                raise ValueError(f"Unbalanced parentheses in signature: {sig}")
+            params_section = sig[start+1:pos-1].strip()
+            rest = sig[pos:].strip()
+            ret = 'void'
+            if rest.startswith('->'):
+                ret = rest[2:]
+
+            params = []
+            if params_section:
+                cur = ''
+                pdepth = 0
+                gdepth = 0
+                for ch in params_section:
+                    if ch == '<':
+                        gdepth += 1; cur += ch
+                    elif ch == '>':
+                        gdepth -= 1; cur += ch
+                    elif ch == '(':
+                        pdepth += 1; cur += ch
+                    elif ch == ')':
+                        pdepth -= 1; cur += ch
+                    elif ch == ',' and pdepth == 0 and gdepth == 0:
+                        params.append(cur.strip()); cur = ''
+                    else:
+                        cur += ch
+                if cur.strip():
+                    params.append(cur.strip())
+            return params, ret
+
+        is_ptr = False
+        inner = flux_type
+        if flux_type.startswith('*'):
+            is_ptr = True
+            inner = flux_type[1:]
+
+        params, ret = _parse_fn_sig(inner)
+        param_cs = [self.get_c_type(p) for p in params] if params else ['void']
+        ret_c = self.get_c_type(ret)
+        if is_ptr:
+            return f"{ret_c} (*{name})({', '.join(param_cs)})"
+        return f"{ret_c} {name}({', '.join(param_cs)})"
+
 class StandaloneCompiler:
 
-    def __init__(self, source_file: str, output_exe: str, verbose: bool = True):
+    def __init__(self, source_file: str, output_exe: str, verbose: bool = True,
+                 link_mode: Optional[str] = None, stack_reserve: Optional[int] = None,
+                 compiler_type: Optional[str] = None):
         self.source_file = Path(source_file)
         self.output_exe = Path(output_exe)
         self.verbose = verbose
@@ -697,57 +794,290 @@ class StandaloneCompiler:
         
         self.c_file = self.temp_dir / f"{self.source_file.stem}.c"
         self.obj_file = self.temp_dir / f"{self.source_file.stem}.obj" if self.is_windows else self.temp_dir / f"{self.source_file.stem}.o"
+        self.link_mode = link_mode
+        self.stack_reserve = stack_reserve
+        self.compiler_type = self._select_compiler(compiler_type)
+    
+    def _select_compiler(self, forced_compiler: Optional[str]) -> str:
+        if forced_compiler:
+            compiler_name = forced_compiler.lower()
+            if compiler_name == 'mingw':
+                compiler_name = 'gcc'
+            if compiler_name == 'lld':
+                compiler_name = 'clang'
+            
+            if self._compiler_exists(compiler_name):
+                return compiler_name
+            else:
+                self.log(f"[ОШИБКА] Компилятор {forced_compiler} не найден", "ERROR")
+                self.log(f"[КАК ИСПРАВИТЬ] Установите {forced_compiler} или выберите другой (--gcc, --clang, --lld, --mingw)", "ERROR")
+                raise RuntimeError(f"Компилятор {forced_compiler} не найден")
+        
+        try:
+            if self.is_windows:
+                if self._compiler_exists('gcc'):
+                    return 'gcc'
+                if self._compiler_exists('clang'):
+                    return 'clang'
+            else:
+                if self._compiler_exists('gcc'):
+                    return 'gcc'
+                if self._compiler_exists('clang'):
+                    return 'clang'
+        except Exception:
+            pass
+        
+        return 'gcc'
+    
+    def _compiler_exists(self, compiler_name: str) -> bool:
+        try:
+            if self.is_windows:
+                cmd = f'{compiler_name}.exe'
+            else:
+                cmd = compiler_name
+            result = subprocess.run([cmd, '--version'], capture_output=True, text=True, timeout=5)
+            return result.returncode == 0
+        except Exception:
+            return False
+    
+    def _detect_linker(self) -> str:
+        try:
+            if self.is_windows:
+                result = subprocess.run(['gcc.exe', '--version'], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    return 'gcc'
+                result = subprocess.run(['clang.exe', '--version'], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    return 'clang'
+            else:
+                result = subprocess.run(['gcc', '--version'], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    return 'gcc'
+                result = subprocess.run(['clang', '--version'], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    return 'clang'
+                result = subprocess.run(['lld', '--version'], capture_output=True, text=True, timeout=5)
+                if result.returncode == 0:
+                    return 'lld'
+        except Exception:
+            pass
+        return 'gcc'
+    
+    def _get_compiler_flags(self) -> str:
+        """Get optimization compiler flags"""
+        env_cflags = os.getenv('CBLERR_CFLAGS')
+        if env_cflags:
+            return env_cflags
+        
+        if self.compiler_type == 'gcc':
+            return '-std=c11 -Os -s -fno-ident -fno-asynchronous-unwind-tables' if self.is_windows else '-std=c11 -O2 -s -ffunction-sections -fdata-sections'
+        elif self.compiler_type == 'clang':
+            return '-std=c11 -O2 -s -ffunction-sections -fdata-sections'
+        return '-std=c11 -O2 -s -ffunction-sections -fdata-sections'
+    
+    def _get_linker_flags(self) -> str:
+        """Generate linker flags based on compiler type and link_mode"""
+        flags = []
+        
+        if self.compiler_type == 'gcc':
+            if self.link_mode == 'static':
+                flags.append('-static')
+                flags.append('-Wl,--gc-sections')
+                flags.append('-Wl,--section-alignment=4096')
+            elif self.link_mode == 'dynamic':
+                flags.append('-shared-libgcc')
+                flags.append('-Wl,--file-alignment=512')
+                flags.append('-Wl,--section-alignment=4096')
+                flags.append('-Wl,--strip-all')
+                flags.append('-Wl,--as-needed')
+                flags.append('-Wl,--gc-sections')
+            else:
+                flags.append('-Wl,--gc-sections')
+                if self.is_windows:
+                    flags.append('-Wl,--nmagic')
+                flags.append('-Wl,--file-alignment=512')
+                flags.append('-Wl,--section-alignment=4096')
+        
+        elif self.compiler_type == 'clang':
+            if self.link_mode == 'static':
+                flags.append('-static')
+                flags.append('-Wl,--gc-sections')
+                flags.append('-Wl,--section-alignment=4096')
+            elif self.link_mode == 'dynamic':
+                flags.append('-shared-libgcc')
+                flags.append('-Wl,--file-alignment=512')
+                flags.append('-Wl,--section-alignment=4096')
+                flags.append('-Wl,--strip-all')
+                flags.append('-Wl,--as-needed')
+                flags.append('-Wl,--gc-sections')
+            else:
+                flags.append('-Wl,--gc-sections')
+                flags.append('-Wl,--file-alignment=512')
+                flags.append('-Wl,--section-alignment=4096')
+        
+        if self.stack_reserve:
+            flags.append(f'-Wl,--stack,{self.stack_reserve}')
+        
+        return ' '.join(flags)
     
     def log(self, message: str, level: str = "INFO"):
-        """Логирование"""
         if self.verbose:
             message = message.replace("✓", "[OK]").replace("✗", "[FAIL]")
-            print(f"[{level}] {message}")
+            
+            MAGENTA = "\033[35m"  
+            CYAN = "\033[36m"    
+            RED = "\033[31m"     
+            RESET = "\033[0m"    
+            
+            message = re.sub(r'\[(\d+)/(\d+)\]', f'{CYAN}[\\1/\\2]{RESET}', message)
+            
+            message = re.sub(r'\[INFO\]', f'{CYAN}[INFO]{RESET}', message)
+            
+            if level == "INFO":
+                level_colored = f"{MAGENTA}[{level}]{RESET}"
+            elif level == "WARN":
+                level_colored = f"{RED}[{level}]{RESET}"
+            else:
+                level_colored = f"[{level}]"
+            
+            print(f"{level_colored} {message}")
+
+    def _handle_compile_error(self, error_output: str, debugger) -> bool:
+        try:
+            if 'implicit declaration of function' in error_output.lower():
+                m = re.search(r"implicit declaration of function '([^']+)'", error_output, flags=re.I)
+                if m:
+                    func_name = m.group(1)
+                    source = None
+                    if self.source_file.exists():
+                        with open(self.source_file, 'r', encoding='utf-8') as f:
+                            source = f.read()
+                    
+                    lines = source.splitlines() if source else []
+                    for line_num, line in enumerate(lines, 1):
+                        if func_name in line:
+                            exc = SyntaxError(f"Неизвестная функция '{func_name}'")
+                            exc.lineno = line_num
+                            exc.offset = line.find(func_name) + 1
+                            debugger.display_syntax_error(exc, source=source, filename=str(self.source_file))
+                            return True
+                return True
+            
+            source = None
+            if self.source_file.exists():
+                with open(self.source_file, 'r', encoding='utf-8') as f:
+                    source = f.read()
+            
+            m = re.search(r"error:\s*'([^']+)'", error_output)
+            if m and source:
+                identifier = m.group(1)
+                lines = source.splitlines()
+                for line_num, line in enumerate(lines, 1):
+                    if identifier in line:
+                        exc = SyntaxError(f"Неизвестный идентификатор '{identifier}'")
+                        exc.lineno = line_num
+                        exc.offset = line.find(identifier) + 1
+                        debugger.display_syntax_error(exc, source=source, filename=str(self.source_file))
+                        return True
+            
+            if m and source is None:
+                identifier = m.group(1)
+                debugger.display_syntax_error(
+                    SyntaxError(f"Неизвестный идентификатор '{identifier}'"),
+                    source=source,
+                    filename=str(self.source_file)
+                )
+                return True
+            
+            m = re.search(r"error:\s*(.+?)(?:\n|$)", error_output)
+            if m:
+                msg = m.group(1).strip()
+                if source:
+                    debugger.display_syntax_error(
+                        SyntaxError(msg),
+                        source=source,
+                        filename=str(self.source_file)
+                    )
+                    return True
+                else:
+                    print(f"[ОШИБКА] {msg}", file=sys.stderr)
+                    return True
+        except Exception:
+            pass
+        return False
     
     def compile(self) -> bool:
         debugger = init_debugger(DebugLevel.INFO)
+        self.debugger = debugger
         try:
-            debugger.log_info("Starting standalone compilation")
-            self.log(f"CBlerr Compiler")
-            self.log(f"Platform: {self.system}")
-            self.log(f"Source: {self.source_file}")
-            self.log(f"Output: {self.output_exe}")
+            debugger.log_info("Начало компиляции...")
+            self.log(f"Консольный Компилятор CBlerr (CCC)")
+            self.log(f"ОС: {self.system}")
+            self.log(f"Выводимый файл: {self.output_exe}")
 
-            self.log("\n[1/4] Reading source file...")
+            self.log("\n[1/4] Читаем код...")
             if not self.source_file.exists():
-                self.log(f"File not found: {self.source_file}", "ERROR")
+                self.log(f"Файл не найден!: {self.source_file}", "ERROR")
                 return False
 
             with open(self.source_file, 'r', encoding='utf-8') as f:
                 source = f.read()
-            self.log(f"  Read {len(source)} bytes")
+            self.log(f"  Прочитано {len(source)} байтов из {self.source_file}")
 
-            self.log("\n[2/4] Tokenizing...")
+            self.log("\n[2/4] Токенизация...")
             tokens = tokenize(source, str(self.source_file))
-            self.log(f"  Generated {len(tokens)} tokens")
+            self.log(f"  Сгенерировано {len(tokens)} токенов")
 
-            self.log("\n[3/4] Parsing...")
+            self.log("\n[3/4] Парсинг кода...")
             ast = parse(tokens)
-            self.log(f"  AST created successfully")
+            self.log(f"  AST Успешно создано!")
 
-            # skip semantic/type checking step
-            # tc = TypeChecker(get_debugger())
-            # tc.check(ast)
+            try:
+                from core.module_loader import inline_imports
+                ast = inline_imports(ast, self.source_file)
+            except Exception as e:
+                self.log(f'Ошибка "Import": {e}', "ERROR")
+                return False
 
-            self.log("\n[4/4] Generating C code...")
-            generator = CCodeGenerator()
+            try:
+                from core.flux_ast import Return, Literal
+                main_fn = None
+                for fn in ast.functions:
+                    if fn.name == 'main':
+                        main_fn = fn
+                        break
+
+                if main_fn and not getattr(main_fn, 'is_extern', False):
+                    found_return0 = False
+                    found_endofcode = False
+                    for stmt in main_fn.body:
+                        if isinstance(stmt, Return):
+                            val = getattr(stmt, 'value', None)
+                            if isinstance(val, Literal) and getattr(val, 'type', None) in ('int', 'i32', 'int32') and int(getattr(val, 'value', 0)) == 0:
+                                found_return0 = True
+                                if getattr(stmt, 'is_endofcode', False):
+                                    found_endofcode = True
+                    if found_return0 and not found_endofcode:
+                        self.log('Используйте "endofcode" вместо return 0. Только по вашему желанию!')
+            except Exception:
+                import traceback
+                traceback.print_exc()
+                self.log("Постобработка AST завершилась неудачей.", "ERROR")
+                return False
+
+            self.log("\n[4/4] Генерирую код...")
+            generator = CCodeGenerator(link_mode=self.link_mode)
             c_code = generator.generate(ast)
 
             with open(self.c_file, 'w', encoding='utf-8') as f:
                 f.write(c_code)
-            self.log(f"  Generated {len(c_code)} bytes of C code")
-            self.log(f"  C code saved to {self.c_file}")
+            self.log(f"  Сгенерировано {len(c_code)} байтов Си кода.")
+            self.log(f"  Си кoд сохранен в:{self.c_file}")
 
-            self.log("\n[5/5] Compiling C to executable...")
+            self.log("\n[5/5] Компилируем Си код в исполняемый файл...")
             success = self._compile_c_to_exe()
             if success:
-                # Exact success message required by spec
-                print("\033[92mCompilation completed!\033[0m")
+                print("\033[92mКомпиляция успешна!\033[0m")
             return success
 
         except (SyntaxError, NameError) as e:
@@ -760,31 +1090,45 @@ class StandaloneCompiler:
                 traceback.print_exc()
                 return False
             else:
-                print(f"[ERROR] CODE ERROR: {e}")
+                src = locals().get('source', None)
+                try:
+                    debugger.display_syntax_error(e, source=src, filename=str(self.source_file))
+                except Exception:
+                    print(f"[ОШИБКА!] ОШИБКА КОДА: {e}")
                 return False
         except Exception as e:
             try:
                 debugger.critical_dump(e)
             except Exception:
                 pass
-            self.log(f"[FATAL] {e}", "ERROR")
+            self.log(f"[ФАТАЛЬНО] {e}", "ERROR")
             import traceback
             traceback.print_exc()
             return False
     
     def _compile_c_to_exe(self) -> bool:
+        if self.compiler_type == 'gcc':
+            if self.is_windows:
+                return self._compile_mingw()
+            else:
+                return self._compile_gcc()
+        elif self.compiler_type == 'clang':
+            return self._compile_clang()
+        elif self.compiler_type == 'lld':
+            return self._compile_lld()
+        
         if self.is_windows:
             return self._compile_msvc() or self._compile_mingw()
         else:
-            return self._compile_gcc() or self._compile_clang()
+            return self._compile_gcc() or self._compile_clang() or self._compile_lld()
     
     def _compile_msvc(self) -> bool:
-        self.log("Trying MSVC...")
+        self.log("Пробую MSVC...")
         
         try:
             cl_exe = self._find_msvc_cl()
             if not cl_exe:
-                self.log("  MSVC not found", "WARN")
+                self.log("  MSVC не найден!", "WARN")
                 return False
             
             runtime_c = Path(__file__).parent.parent / 'lib' / 'cblerr_engine_runtime.c'
@@ -792,160 +1136,304 @@ class StandaloneCompiler:
             if runtime_c.exists():
                 srcs.append(str(runtime_c))
 
-            cmd = [
-                cl_exe,
-            ] + srcs + [
-                f'/Fe{self.output_exe}',
-                '/link', '/INCREMENTAL:NO', '/OPT:REF', '/OPT:ICF',
-                'kernel32.lib', 'user32.lib', 'winmm.lib', 'gdi32.lib', 'msvcrt.lib'
-            ]
+            msvc_compile_flags = '/O2'
+            msvc_compile_flags += ' /GR-'
+            msvc_link_flags = '/INCREMENTAL:NO /OPT:REF /OPT:ICF /ALIGN:4096'
+            if self.stack_reserve:
+                msvc_link_flags += f' /STACK:{self.stack_reserve}'
+
+            libs = ['kernel32.lib', 'user32.lib', 'winmm.lib', 'gdi32.lib', 'msvcrt.lib']
+
+            cmd = [cl_exe] + msvc_compile_flags.split() + srcs + [f'/Fe{self.output_exe}', '/link'] + msvc_link_flags.split() + libs
             
-            self.log(f"  Running: {' '.join(cmd)}")
+            self.log(f"  Запускаю: cl.exe для компиляции кода...")
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
             exe_found = self.output_exe.exists() or (self.is_windows and self.output_exe.with_suffix('.exe').exists())
 
             if result.returncode == 0 and exe_found:
-                self.log(f"  [OK] MSVC compilation successful!")
+                self.log(f"  Компиляция через MSVC удачна!")
                 try:
                     keep = SAVE_C_FLAG or os.getenv('CBLERR_KEEP_C', '0') == '1'
                     if keep:
-                        self.log(f"  Keeping temporary files because -c or CBLERR_KEEP_C set: {self.c_file}")
+                        self.log(f"  Оставляю Си файл из - за флага -c: {self.c_file}")
                     else:
                         if self.c_file.exists():
                             os.remove(self.c_file)
-                            self.log(f"  Removed temporary C file: {self.c_file}")
+                            self.log(f"  Удалены временные файлы: {self.c_file}")
                         if self.obj_file.exists():
                             os.remove(self.obj_file)
-                            self.log(f"  Removed temporary OBJ file: {self.obj_file}")
+                            self.log(f"  Удалены дополнительные временные данные: {self.obj_file}")
                 except Exception as e:
-                    self.log(f"  Cleanup error: {e}", "WARN")
+                    self.log(f"  Ошибка удаления: {e}", "WARN")
                 return True
             else:
                 combined = (result.stdout or "") + ("\n" if result.stdout and result.stderr else "") + (result.stderr or "")
-                self.log(f"  MSVC compilation failed: {combined}", "WARN")
+                if not self._handle_compile_error(combined, self.debugger):
+                    self.log(f"  Компиляция через MSVC неудачна!: {combined}", "WARN")
                 return False
                 
         except Exception as e:
-            self.log(f"  MSVC error: {e}", "WARN")
+            self.log(f"  Ошибка MSVC: {e}", "WARN")
             return False
     
     def _compile_mingw(self) -> bool:
-        self.log("Trying MinGW (gcc.exe)...")
+        self.log("Пробую MinGW (gcc.exe)...")
         
         try:
             runtime_c = Path(__file__).parent.parent / 'lib' / 'cblerr_engine_runtime.c'
             srcs = [str(self.c_file)]
+            runtime_archive = None
             if runtime_c.exists():
-                srcs.append(str(runtime_c))
+                if self.link_mode == 'static':
+                    runtime_archive = self._prepare_runtime_archive(runtime_c)
+                else:
+                    srcs.append(str(runtime_c))
 
-            cmd = [
-                'gcc.exe',
-            ] + srcs + [
-                '-o', str(self.output_exe),
-                '-luser32', '-lkernel32', '-lwinmm', '-lgdi32', '-lncurses', '-lm'
-            ]
+            libs = ['-luser32', '-lkernel32', '-lwinmm', '-lgdi32', '-lopengl32', '-lm']
 
-            # Example: set CBLERR_CFLAGS=-std=c11 -O0 -s
-            env_cflags = os.getenv('CBLERR_CFLAGS')
-            if env_cflags:
-                cmd += env_cflags.split()
-            else:
-                cmd += ['-std=c11', '-O2', '-s']
+            cflags_str = self._get_compiler_flags()
+            ldflags_str = self._get_linker_flags()
             
-            self.log(f"  Running: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            if self.link_mode == 'static' and runtime_archive and runtime_archive.exists():
+                ldflags_str += f' -Wl,--whole-archive {runtime_archive} -Wl,--no-whole-archive'
+            elif self.link_mode == 'dynamic':
+                implib = f'lib{self.output_exe.stem}.a'
+                ldflags_str += f' -Wl,--out-implib,{implib}'
+
+            cmd = ['gcc.exe'] + cflags_str.split() + srcs + ['-o', str(self.output_exe)] + ldflags_str.split() + libs
+
+            self.log(f"  Запускаю: gcc.exe для компиляции кода...")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
             exe_found = self.output_exe.exists() or (self.is_windows and self.output_exe.with_suffix('.exe').exists())
 
             if result.returncode == 0 and exe_found:
-                self.log(f"  [OK] MinGW compilation successful!")
                 try:
+                    exe_p = self.output_exe if self.output_exe.exists() else (self.output_exe.with_suffix('.exe') if self.output_exe.with_suffix('.exe').exists() else self.output_exe)
+                    try:
+                        od = subprocess.run(['objdump','-h',str(exe_p)], capture_output=True, text=True, timeout=15)
+                        if od.returncode==0 and od.stdout:
+                            sizes = re.findall(r'^\s*\d+\s+\S+\s+([0-9A-Fa-f]+)', od.stdout, flags=re.M)
+                            if sizes:
+                                total = sum(int(x,16) for x in sizes)
+                                phys = os.path.getsize(str(exe_p))
+                                self.log(f"Размер чистого кода: {total/1024.0:.2f} КБ")
+                                self.log(f"Мусор (Заголовки/Отступы): {(phys-total)/1024.0:.2f} КБ")
+                            else:
+                                print("Вес файла не был определен!")
+                        else:
+                            print("Вес файла не был определен!")
+                    except Exception:
+                        print("Вес файла не был определен!")
+
                     keep = SAVE_C_FLAG or os.getenv('CBLERR_KEEP_C', '0') == '1'
                     if keep:
-                        self.log(f"  Keeping temporary files because -c or CBLERR_KEEP_C=1: {self.c_file}")
+                        self.log(f"  Оставляю временный Си файл: {self.c_file}")
                     else:
                         if self.c_file.exists():
                             os.remove(self.c_file)
-                            self.log(f"  Removed temporary C file: {self.c_file}")
+                            self.log(f"  Удалены временные файлы: {self.c_file}")
                         if self.obj_file.exists():
                             os.remove(self.obj_file)
-                            self.log(f"  Removed temporary OBJ file: {self.obj_file}")
+                            self.log(f"  Удалены дополнительные временные файлы: {self.obj_file}")
+                        try:
+                            if runtime_archive and runtime_archive.exists():
+                                os.remove(runtime_archive)
+                                self.log(f"  Удалён архив среды выполнения.: {runtime_archive}")
+                            runtime_o = self.temp_dir / f"{Path(runtime_c).stem}.o"
+                            if runtime_o.exists():
+                                os.remove(runtime_o)
+                                self.log(f"  Удалён объект времени выполнения: {runtime_o}")
+                        except Exception:
+                            pass
                 except Exception as e:
-                    self.log(f"  Cleanup error: {e}", "WARN")
+                    self.log(f"  Ошибка удаления: {e}", "WARN")
                 return True
             else:
                 combined = (result.stdout or "") + ("\n" if result.stdout and result.stderr else "") + (result.stderr or "")
-                self.log(f"  MinGW compilation failed: {combined}", "WARN")
+                if not self._handle_compile_error(combined, self.debugger):
+                    self.log(f"  Компиляция через MinGW неудачна!: {combined}", "WARN")
                 return False
                 
         except FileNotFoundError:
-            self.log("  MinGW not found", "WARN")
+            self.log("  MinGW не найден", "WARN")
             return False
         except Exception as e:
-            self.log(f"  MinGW error: {e}", "WARN")
+            self.log(f"  Ошибка MinGW: {e}", "WARN")
             return False
+
+    def _prepare_runtime_archive(self, runtime_c: Path) -> Optional[Path]:
+        try:
+            runtime_c = Path(runtime_c)
+            if not runtime_c.exists():
+                return None
+            runtime_o = self.temp_dir / f"{runtime_c.stem}.o"
+            runtime_a = self.temp_dir / f"lib{runtime_c.stem}.a"
+
+            cc = ['gcc', '-c', str(runtime_c), '-o', str(runtime_o), '-std=c11', '-O2', '-fdata-sections', '-ffunction-sections']
+            self.log(f"  Подготавливаем среду выполнения...")
+            r = subprocess.run(cc, capture_output=True, text=True, timeout=30)
+            if r.returncode != 0:
+                self.log(f"  Компиляция во время выполнения завершилась с ошибкой.: {(r.stdout or '') + (r.stderr or '')}", "WARN")
+                return None
+
+            ar = ['ar', 'rcs', str(runtime_a), str(runtime_o)]
+            self.log(f"  Архивирование среды выполнения...")
+            r2 = subprocess.run(ar, capture_output=True, text=True, timeout=30)
+            if r2.returncode != 0:
+                self.log(f"  Архивирование среды выполнения не удалось: {(r2.stdout or '') + (r2.stderr or '')}", "WARN")
+                return None
+
+            return runtime_a
+        except FileNotFoundError:
+            self.log("  Компилятор 'gcc' или 'ar' не найден при подготовке архива среды выполнения.", "WARN")
+            return None
+        except Exception as e:
+            self.log(f"  Ошибка архива времени выполнения: {e}", "WARN")
+            return None
     
     def _compile_gcc(self) -> bool:
-        self.log("Trying GCC...")
+        self.log("Пробую GCC...")
         
         try:
-            cmd = [
-                'gcc',
-                str(self.c_file),
-                '-o', str(self.output_exe),
-                '-lm', '-lc', '-O2', '-std=c11'
-            ]
+            runtime_c = Path(__file__).parent.parent / 'lib' / 'cblerr_engine_runtime.c'
+            srcs = [str(self.c_file)]
+            runtime_archive = None
+            if runtime_c.exists():
+                if self.link_mode == 'static':
+                    runtime_archive = self._prepare_runtime_archive(runtime_c)
+                else:
+                    srcs.append(str(runtime_c))
+
+            libs = ['-lm', '-lc']
+
+            cflags_str = self._get_compiler_flags()
+            ldflags_str = self._get_linker_flags()
             
-            self.log(f"  Running: {' '.join(cmd)}")
+            if self.link_mode == 'static' and runtime_archive and runtime_archive.exists():
+                ldflags_str += f' -Wl,--whole-archive {runtime_archive} -Wl,--no-whole-archive'
+            elif self.link_mode == 'dynamic':
+                implib = f'lib{self.output_exe.stem}.a'
+                ldflags_str += f' -Wl,--out-implib,{implib}'
+
+            cmd = ['gcc'] + cflags_str.split() + srcs + ['-o', str(self.output_exe)] + ldflags_str.split() + libs
+
+            self.log(f"  Запускаю: gcc для компиляции кода...")
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
             exe_found = self.output_exe.exists() or (self.is_windows and self.output_exe.with_suffix('.exe').exists())
 
             if result.returncode == 0 and exe_found:
-                self.log(f"  GCC compilation successful!")
+                self.log(f"  Компиляция через GCC успешна!")
                 return True
             else:
                 combined = (result.stdout or "") + ("\n" if result.stdout and result.stderr else "") + (result.stderr or "")
-                self.log(f"  GCC compilation failed: {combined}", "WARN")
+                if not self._handle_compile_error(combined, self.debugger):
+                    self.log(f"  Ошибка компиляции GCC: {combined}", "WARN")
                 return False
                 
         except FileNotFoundError:
-            self.log("  GCC not found", "WARN")
+            self.log("  GCC не найден!", "WARN")
             return False
         except Exception as e:
-            self.log(f"  GCC error: {e}", "WARN")
+            self.log(f"  Ошибка GCC: {e}", "WARN")
             return False
     
     def _compile_clang(self) -> bool:
-        self.log("Trying Clang...")
+        self.log("Пробую Clang...")
         
         try:
-            cmd = [
-                'clang',
-                str(self.c_file),
-                '-o', str(self.output_exe),
-                '-lm', '-lc', '-O2', '-std=c11'
-            ]
+            runtime_c = Path(__file__).parent.parent / 'lib' / 'cblerr_engine_runtime.c'
+            srcs = [str(self.c_file)]
+            runtime_archive = None
+            if runtime_c.exists():
+                if self.link_mode == 'static':
+                    runtime_archive = self._prepare_runtime_archive(runtime_c)
+                else:
+                    srcs.append(str(runtime_c))
+
+            libs = ['-lm', '-lc']
+
+            cflags_str = self._get_compiler_flags()
+            ldflags_str = self._get_linker_flags()
             
-            self.log(f"  Running: {' '.join(cmd)}")
+            if self.link_mode == 'static' and runtime_archive and runtime_archive.exists():
+                ldflags_str += f' -Wl,--whole-archive {runtime_archive} -Wl,--no-whole-archive'
+            elif self.link_mode == 'dynamic':
+                implib = f'lib{self.output_exe.stem}.a'
+                ldflags_str += f' -Wl,--out-implib,{implib}'
+
+            clang_cmd = 'clang.exe' if self.is_windows else 'clang'
+            cmd = [clang_cmd] + cflags_str.split() + srcs + ['-o', str(self.output_exe)] + ldflags_str.split() + libs
+
+            self.log(f"  Запускаю: {clang_cmd} для компиляции кода...")
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
             exe_found = self.output_exe.exists() or (self.is_windows and self.output_exe.with_suffix('.exe').exists())
 
             if result.returncode == 0 and exe_found:
-                self.log(f"  Clang compilation successful!")
+                self.log(f"  Компиляция через Clang успешна!")
                 return True
             else:
                 combined = (result.stdout or "") + ("\n" if result.stdout and result.stderr else "") + (result.stderr or "")
-                self.log(f"  Clang compilation failed: {combined}", "WARN")
+                if not self._handle_compile_error(combined, self.debugger):
+                    self.log(f"  Компиляция через Clang не удалась: {combined}", "WARN")
                 return False
                 
         except FileNotFoundError:
-            self.log("  Clang not found", "WARN")
+            self.log("  Clang не найден!", "WARN")
             return False
         except Exception as e:
-            self.log(f"  Clang error: {e}", "WARN")
+            self.log(f"  Ошибка Clang: {e}", "WARN")
+            return False
+    
+    def _compile_lld(self) -> bool:
+        self.log("Пробую LLD...")
+        
+        try:
+            runtime_c = Path(__file__).parent.parent / 'lib' / 'cblerr_engine_runtime.c'
+            srcs = [str(self.c_file)]
+            runtime_archive = None
+            if runtime_c.exists():
+                if self.link_mode == 'static':
+                    runtime_archive = self._prepare_runtime_archive(runtime_c)
+                else:
+                    srcs.append(str(runtime_c))
+
+            libs = ['-lm', '-lc']
+
+            cflags_str = self._get_compiler_flags()
+            ldflags_str = self._get_linker_flags()
+            
+            if self.link_mode == 'static' and runtime_archive and runtime_archive.exists():
+                ldflags_str += f' -Wl,--whole-archive {runtime_archive} -Wl,--no-whole-archive'
+            elif self.link_mode == 'dynamic':
+                implib = f'lib{self.output_exe.stem}.a'
+                ldflags_str += f' -Wl,--out-implib,{implib}'
+
+            clang_cmd = 'clang.exe' if self.is_windows else 'clang'
+            cmd = [clang_cmd] + cflags_str.split() + srcs + ['-o', str(self.output_exe)] + ldflags_str.split() + libs
+
+            self.log(f"  Запускаю: {clang_cmd}+lld для компиляции кода...")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+
+            exe_found = self.output_exe.exists() or (self.is_windows and self.output_exe.with_suffix('.exe').exists())
+
+            if result.returncode == 0 and exe_found:
+                self.log(f"  Компиляция через LLD успешна!")
+                return True
+            else:
+                combined = (result.stdout or "") + ("\n" if result.stdout and result.stderr else "") + (result.stderr or "")
+                if not self._handle_compile_error(combined, self.debugger):
+                    self.log(f"  Компиляция через LLD не удалась: {combined}", "WARN")
+                return False
+                
+        except FileNotFoundError:
+            self.log("  LLD не найден!", "WARN")
+            return False
+        except Exception as e:
+            self.log(f"  Ошибка LLD: {e}", "WARN")
             return False
     
     def _find_msvc_cl(self) -> Optional[str]:
@@ -970,18 +1458,28 @@ class StandaloneCompiler:
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python build/builde.py <source.cbl> [options]")
-        print("Options:")
-        print("  -o <file>    Output executable path")
-        print("  -t <target>  Target: windows (default) or linux")
-        print("  --verbose    Show detailed output")
-        print("  -c            Keep generated C file")
+        print("Использование: python build/build.py <исходный_файл.cbl> [опции]")
+        print("Опции:")
+        print("  -o <файл>    Путь к выходному исполняемому файлу")
+        print("  -t <цель>    Целевая платформа: windows (по умолчанию) или linux")
+        print("  --verbose    Показывать подробный вывод")
+        print("  -c           Сохранить сгенерированный C-файл")
+        print("  -static      Принудительная статическая линковка (передает -static в gcc)")
+        print("  -dynamic     Принудительная динамическая линковка (использует -shared-libgcc и implib)")
+        print("  --stack-size <байты|K|M>  Зарезервировать стек (в байтах или с суффиксом K/M)")
+        print("  --gcc        Использовать GCC компилятор")
+        print("  --clang      Использовать Clang компилятор")
+        print("  --lld        Использовать Clang + LLD линкер")
+        print("  --mingw      Использовать MinGW (GCC для Windows)")
         sys.exit(1)
     
     source_file = sys.argv[1]
     output_exe = None
     target = "windows"
     verbose = True
+    link_mode = None
+    stack_size = None
+    compiler_type = None
     
     i = 2
     while i < len(sys.argv):
@@ -994,6 +1492,38 @@ def main():
         elif sys.argv[i] == '--verbose':
             verbose = True
             i += 1
+        elif sys.argv[i] == '-static':
+            link_mode = 'static'
+            i += 1
+        elif sys.argv[i] == '-dynamic':
+            link_mode = 'dynamic'
+            i += 1
+        elif sys.argv[i] == '--gcc':
+            compiler_type = 'gcc'
+            i += 1
+        elif sys.argv[i] == '--clang':
+            compiler_type = 'clang'
+            i += 1
+        elif sys.argv[i] == '--lld':
+            compiler_type = 'lld'
+            i += 1
+        elif sys.argv[i] == '--mingw':
+            compiler_type = 'mingw'
+            i += 1
+        elif sys.argv[i] in ('--stack-size',) and i + 1 < len(sys.argv):
+            raw = sys.argv[i + 1]
+            try:
+                s = raw.strip().upper()
+                if s.endswith('M'):
+                    stack_size = int(float(s[:-1]) * 1024 * 1024)
+                elif s.endswith('K'):
+                    stack_size = int(float(s[:-1]) * 1024)
+                else:
+                    stack_size = int(s)
+            except Exception:
+                print(f"Неверный размер стека: {raw}")
+                sys.exit(1)
+            i += 2
         else:
             i += 1
     
@@ -1002,15 +1532,14 @@ def main():
         exe_ext = '.exe' if target == 'windows' else ''
         output_exe = source_path.stem + exe_ext
     
-    compiler = StandaloneCompiler(source_file, output_exe, verbose=verbose)
+    compiler = StandaloneCompiler(source_file, output_exe, verbose=verbose, link_mode=link_mode, stack_reserve=stack_size, compiler_type=compiler_type)
     success = compiler.compile()
     
     if success:
-        print(f"\n[OK] Compilation successful!")
-        print(f"Output: {compiler.output_exe}")
+        print(f"Исполняемый файл: {compiler.output_exe}")
         sys.exit(0)
     else:
-        print(f"\n[FAIL] Compilation failed!")
+        print(f"\n[НЕУДАЧА] Ошибка компиляции!")
         sys.exit(1)
 
 if __name__ == "__main__":
