@@ -1,5 +1,0 @@
-# CBlerr Compiler - Python Dependencies
-# Build system and compilation tools
-
-# LLVM IR code generation (optional, used by compiler.py)
-llvmlite>=0.39.0

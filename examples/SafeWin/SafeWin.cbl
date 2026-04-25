@@ -1,0 +1,71 @@
+extern def GetDC(hWnd: *void) -> *void
+extern def ReleaseDC(hWnd: *void, hDC: *void) -> i32
+extern def BitBlt(hdcDest: *void, xDest: i32, yDest: i32, wDest: i32, hDest: i32, hdcSrc: *void, xSrc: i32, ySrc: i32, rop: u32) -> i32
+extern def StretchBlt(hdcDest: *void, xDest: i32, yDest: i32, wDest: i32, hDest: i32, hdcSrc: *void, xSrc: i32, ySrc: i32, wSrc: i32, hSrc: i32, rop: u32) -> i32
+extern def PatBlt(hdc: *void, x: i32, y: i32, w: i32, h: i32, rop: u32) -> i32
+extern def CreateSolidBrush(color: u32) -> *void
+extern def SelectObject(hdc: *void, h: *void) -> *void
+extern def DeleteObject(ho: *void) -> i32
+extern def GetSystemMetrics(nIndex: i32) -> i32
+extern def GetAsyncKeyState(vKey: i32) -> i16
+extern def Sleep(dwMilliseconds: i32) -> void
+extern def SetProcessDPIAware() -> i32
+
+seed: u32 = 123456789
+
+def random() -> u32:
+    seed = seed * 1664525 + 1013904223
+    return seed
+
+def isin(x: i32) -> i32:
+    v: i32 = x % 360
+    if v < 0:
+        v = v + 360
+    if v < 180:
+        return v - 90
+    return 270 - v
+
+def WinMain(hInstance: *void, hPrevInstance: *void, lpCmdLine: *void, nShowCmd: i32) -> i32:
+    SetProcessDPIAware()
+
+    vx: i32 = GetSystemMetrics(76)
+    vy: i32 = GetSystemMetrics(77)
+    vw: i32 = GetSystemMetrics(78)
+    vh: i32 = GetSystemMetrics(79)
+    hdc: *void = GetDC(0 as *void)
+    
+    t: i32 = 0
+    i: i32 = 0
+    hBrush: *void = 0 as *void
+    hOld: *void = 0 as *void
+
+    while 1:
+        if GetAsyncKeyState(0x1B) != 0:
+            break
+
+        BitBlt(hdc, vx + ((random() % (vw as u32)) as i32), vy + ((random() % 15) as i32), (random() % 150) as i32, vh, hdc, vx + ((random() % (vw as u32)) as i32), vy, 0x00CC0020)
+
+        if (random() % 100) < 5:
+            BitBlt(hdc, vx, vy, vw, vh, hdc, vx, vy, 0x00330008)
+
+        if (random() % 100) < 10:
+            StretchBlt(hdc, vx + 10, vy + 10, vw - 20, vh - 20, hdc, vx, vy, vw, vh, 0x00CC0020)
+
+        if (random() % 100) < 15:
+            hBrush = CreateSolidBrush(random() % 16777216)
+            hOld = SelectObject(hdc, hBrush)
+            PatBlt(hdc, vx, vy + ((random() % (vh as u32)) as i32), vw, (random() % 100) as i32, 0x005A0049) 
+            SelectObject(hdc, hOld)
+            DeleteObject(hBrush)
+
+        if (random() % 100) < 10:
+            i = 0
+            while i < vh:
+                BitBlt(hdc, vx + (isin((i * 3) + t) / 5), vy + i, vw, 10, hdc, vx, vy + i, 0x00CC0020)
+                i = i + 10
+
+        t = t + 20
+        Sleep(10)
+
+    ReleaseDC(0 as *void, hdc)
+    endofcode

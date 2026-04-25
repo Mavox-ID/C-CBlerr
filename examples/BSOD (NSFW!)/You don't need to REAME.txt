@@ -1,0 +1,8 @@
+BSOD.cbl (System Stability Tester) This example shows the ability of CBlerr to deeply integrate itself with the Windows Kernel through the Native API, thereby avoiding all high-level limitations. 
+Technically speaking: Direct imports of crucial APIs from ntdll.dll and kernel32.dll are used for altering system privilege settings. 
+
+Access mechanism: 
+Through usage of RtlAdjustPrivilege function, the software forces request to obtain SeShutdownPrivilege (identifier 19), which in theory grants the application the right to shut down the whole system. System crash creation: NtRaiseHardError is being invoked with status code 0xC0000001 to cause the operating system into an error state. 
+
+Native Power: 
+The whole procedure is done without any bulky third-party libraries, working on hardware level directly.

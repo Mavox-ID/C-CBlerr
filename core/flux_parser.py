@@ -755,7 +755,7 @@ class Parser:
             if '.' in token.value:
                 expr = Literal(float(token.value), 'float')
             else:
-                expr = Literal(int(token.value), 'int')
+                expr = Literal(int(token.value, 0), 'int')
 
         elif token.type == TokenType.NAME:
             name = token.value

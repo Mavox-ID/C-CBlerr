@@ -1,0 +1,2 @@
+The Fire.exe demo exhibits the incredible fast computations capabilities of CBlerr as it performs complex CPU computations without using any OpenGL and/or GPU power.
+The Fire.exe demo works solely through the use of sin/cos computations.

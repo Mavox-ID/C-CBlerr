@@ -19,7 +19,7 @@ def _resolve_module_path(module_name: str, base_dir: Path) -> Path:
         cand2 = candidate.with_suffix('.cbl')
         if cand2.exists():
             return cand2.resolve()
-    raise ImportError(f"Imported file not found: {module_name} (from {base_dir})")
+    raise ImportError(f"Импортируемый файл не найден: {module_name} (from {base_dir})")
 
 
 def inline_imports(program: Program, source_path: str | Path, cache: Dict[Path, Program] | None = None,

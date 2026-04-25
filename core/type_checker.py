@@ -547,7 +547,7 @@ class TypeChecker:
                 return lt
             if expr.op in ('==', '!=', '<', '>', '<=', '>='):
                 if (isinstance(lt, str) and lt.startswith('f')) or (isinstance(rt, str) and rt.startswith('f')):
-                    self._error("Прямое сравнение float значений не поддерживается на LLVM backend; преобразуйте к int или используйте вспомогательную функцию")
+                    self._error("Прямое сравнение float значений не поддерживается в текущем бэкенде; преобразуйте к int или используйте вспомогательную функцию")
                 expr.resolved_type = 'bool'
                 return 'bool'
             if expr.op in ('and', 'or'):

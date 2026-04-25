@@ -66,10 +66,12 @@ from core.flux_ast import (
 from core.flux_ast import MatchStmt, Case, ForLoop, EnumDef, AddressOf, SizeOf
 from core.debugger import init_debugger, get_debugger, DebugLevel
 
+
 class CCodeGenerator:
-    def __init__(self, module_name: str = "cblerr_module", link_mode: Optional[str] = None):
+    def __init__(self, module_name: str = "cblerr_module", link_mode: Optional[str] = None, is_gui_app: bool = False):
         self.module_name = module_name
         self.link_mode = link_mode
+        self.is_gui_app = is_gui_app
         self.code_lines = []
         self.indent_level = 0
         self.struct_definitions = {}
@@ -87,23 +89,78 @@ class CCodeGenerator:
             self.emit_line('#define CBLERR_LINK_STATIC 1')
         elif self.link_mode == 'dynamic':
             self.emit_line('#define CBLERR_LINK_DYNAMIC 1')
-        self.emit_line("#include <stdio.h>")
-        self.emit_line("#include <stdlib.h>")
-        self.emit_line("#include <string.h>")
-        self.emit_line("#include <stdint.h>")
-        self.emit_line("#include <stdbool.h>")
-        self.emit_line("#if defined(__has_include)")
-        self.emit_line("#  if __has_include(<ncurses.h>)")
-        self.emit_line("#    include <ncurses.h>")
-        self.emit_line("#  elif __has_include(<curses.h>)")
-        self.emit_line("#    include <curses.h>")
-        self.emit_line("#  endif")
+            
+        self.emit_line("typedef signed char int8_t;")
+        self.emit_line("typedef short int16_t;")
+        self.emit_line("typedef int int32_t;")
+        self.emit_line("typedef long long int64_t;")
+        self.emit_line("typedef unsigned char uint8_t;")
+        self.emit_line("typedef unsigned short uint16_t;")
+        self.emit_line("typedef unsigned int uint32_t;")
+        self.emit_line("typedef unsigned long long uint64_t;")
+        self.emit_line("#if defined(__GNUC__) || defined(__clang__)")
+        self.emit_line("typedef __SIZE_TYPE__ size_t;")
         self.emit_line("#else")
-        self.emit_line("#  include <curses.h>")
+        self.emit_line("#if defined(_WIN64)")
+        self.emit_line("typedef unsigned long long size_t;")
+        self.emit_line("#else")
+        self.emit_line("typedef unsigned int size_t;")
         self.emit_line("#endif")
+        self.emit_line("#endif")
+        self.emit_line("#define bool _Bool")
+        self.emit_line("#define true 1")
+        self.emit_line("#define false 0")
+        self.emit_line("#define NULL ((void*)0)")
         self.emit_line("")
         self.emit_line("typedef struct { const char* data; int64_t length; } flux_string;")
         self.emit_line("")
+        
+        self.emit_line("#if defined(_WIN32) || defined(__WIN32__)")
+        self.emit_line("extern void* __stdcall LoadLibraryA(const void*);")
+        self.emit_line("extern void* __stdcall GetProcAddress(void*, const void*);")
+        self.emit_line("extern void* __stdcall GetModuleHandleA(const void*);")
+        self.emit_line("extern void __stdcall ExitProcess(uint32_t);")
+        self.emit_line("int _fltused = 0;")       
+        self.emit_line("void __main(void) {}")    
+        self.emit_line("#endif")
+        self.emit_line("")
+        
+        self.emit_line("extern void* malloc(size_t);")
+        self.emit_line("extern void* calloc(size_t, size_t);")
+        self.emit_line("extern void* realloc(void*, size_t);")
+        self.emit_line("extern void free(void*);")
+        self.emit_line("extern void* memset(void*, int, size_t);")
+        self.emit_line("extern void* memcpy(void*, const void*, size_t);")
+        self.emit_line("extern void* memmove(void*, const void*, size_t);")
+        self.emit_line("extern int strcmp(const char*, const char*);")
+        self.emit_line("extern int printf(const char*, ...);")
+        self.emit_line("extern int sprintf(char*, const char*, ...);")
+        self.emit_line("extern int puts(const char*);")
+        self.emit_line("extern int putchar(int);")
+        self.emit_line("extern int scanf(const char*, ...);")
+        self.emit_line("extern void exit(int);")
+        self.emit_line("extern void* fopen(const char*, const char*);")
+        self.emit_line("extern int fclose(void*);")
+        self.emit_line("extern int fgetc(void*);")
+        self.emit_line("extern int fputc(int, void*);")
+        self.emit_line("extern int feof(void*);")
+        self.emit_line("extern int system(const char*);")
+        self.emit_line("")
+        
+        self.emit_line("#if defined(_WIN32) || defined(__WIN32__)")
+        self.emit_line("typedef int32_t (__stdcall *PFN_SWCA)(void*, void*);")
+        self.emit_line("static inline int32_t Cblerr_SetWindowCompositionAttribute(void* hwnd, void* data) {")
+        self.emit_line("    void* hUser = LoadLibraryA((const void*)\"user32.dll\");")
+        self.emit_line("    if (hUser) {")
+        self.emit_line("        PFN_SWCA pfn = (PFN_SWCA)GetProcAddress(hUser, (const void*)\"SetWindowCompositionAttribute\");")
+        self.emit_line("        if (pfn) return pfn(hwnd, data);")
+        self.emit_line("    }")
+        self.emit_line("    return 0;")
+        self.emit_line("}")
+        self.emit_line("#define SetWindowCompositionAttribute Cblerr_SetWindowCompositionAttribute")
+        self.emit_line("#endif")
+        self.emit_line("")
+
         if program.structs:
             for struct_def in program.structs:
                 if isinstance(struct_def, EnumDef):
@@ -121,9 +178,11 @@ class CCodeGenerator:
             for global_var in program.global_vars:
                 self.generate_global_var(global_var)
             self.emit_line("")
+            
         if program.functions:
-            skip_std = {'malloc', 'free', 'memset', 'memcpy', 'printf', 'puts', 'putchar', 'scanf', 'exit',
-                        'fopen', 'fgetc', 'feof', 'fclose', 'fputc', 'system'}
+            skip_std = {'malloc', 'calloc', 'realloc', 'free', 'memset', 'memcpy', 'memmove', 'printf', 'sprintf',
+                        'puts', 'putchar', 'scanf', 'exit', 'fopen', 'fgetc', 'feof', 'fclose', 'fputc', 'system',
+                        'SetWindowCompositionAttribute', 'LoadLibraryA', 'GetProcAddress', 'GetModuleHandleA', 'ExitProcess'}
             for func_def in program.functions:
                 if hasattr(func_def, 'is_extern') and func_def.is_extern:
                     if func_def.name in skip_std:
@@ -146,6 +205,15 @@ class CCodeGenerator:
                     continue
                 self.generate_function_def(func_def)
                 self.emit_line("")
+                
+        self.emit_line("")
+        self.emit_line("#if defined(_WIN32) || defined(__WIN32__)")
+        if self.is_gui_app:
+            self.emit_line("void CblerrStartup(void) { WinMain(GetModuleHandleA(NULL), NULL, (void*)\"\", 5); ExitProcess(0); }")
+        else:
+            self.emit_line("void CblerrStartup(void) { main(); ExitProcess(0); }")
+        self.emit_line("#endif")
+        
         return "\n".join(self.code_lines)
 
     def emit_line(self, line: str = ""):
@@ -165,9 +233,6 @@ class CCodeGenerator:
         s = s.replace('\r', '\\r')
         s = s.replace('\t', '\\t')
         return s
-
-    def _emit_die_helper(self):
-        return
 
     def generate_struct_def(self, struct_def):
         self.emit_line(f"struct {struct_def.name} {{")
@@ -233,6 +298,19 @@ class CCodeGenerator:
                         param_c_type = self.get_c_type(param_type)
                         params.append(f"{param_c_type} {param_name}")
         params_str = ", ".join(params) if params else "void"
+        
+        if platform.system() == 'Windows':
+            cdecl_funcs = {'malloc', 'calloc', 'realloc', 'free', 'memset', 'memcpy', 'memmove', 
+                           'printf', 'sprintf', 'puts', 'putchar', 'scanf', 'exit', 'fopen', 
+                           'fgetc', 'feof', 'fclose', 'fputc', 'system', 'wsprintfA'}
+            
+            if hasattr(func_def, 'is_extern') and func_def.is_extern:
+                if func_def.name not in cdecl_funcs:
+                    return f"{return_type} __stdcall {func_def.name}({params_str})"
+                    
+            if func_def.name in ('WinMain', 'WindowProc'):
+                return f"{return_type} __stdcall {func_def.name}({params_str})"
+                
         return f"{return_type} {func_def.name}({params_str})"
 
     def generate_function_def(self, func_def):
@@ -408,7 +486,6 @@ class CCodeGenerator:
                 self.indent_level -= 1
                 self.emit_line("}")
                 return
-
 
             self.emit_line("{")
             self.indent_level += 1
@@ -777,8 +854,8 @@ class CCodeGenerator:
             return f"{ret_c} (*{name})({', '.join(param_cs)})"
         return f"{ret_c} {name}({', '.join(param_cs)})"
 
-class StandaloneCompiler:
 
+class StandaloneCompiler:
     def __init__(self, source_file: str, output_exe: str, verbose: bool = True,
                  link_mode: Optional[str] = None, stack_reserve: Optional[int] = None,
                  compiler_type: Optional[str] = None):
@@ -798,6 +875,27 @@ class StandaloneCompiler:
         self.stack_reserve = stack_reserve
         self.compiler_type = self._select_compiler(compiler_type)
     
+    def log(self, message: str, level: str = "INFO"):
+        if self.verbose:
+            message = message.replace("✓", "[OK]").replace("✗", "[FAIL]")
+            
+            MAGENTA = "\033[35m"  
+            CYAN = "\033[36m"    
+            RED = "\033[31m"     
+            RESET = "\033[0m"    
+            
+            message = re.sub(r'\[(\d+)/(\d+)\]', f'{CYAN}[\\1/\\2]{RESET}', message)
+            message = re.sub(r'\[INFO\]', f'{CYAN}[INFO]{RESET}', message)
+            
+            if level == "INFO":
+                level_colored = f"{MAGENTA}[{level}]{RESET}"
+            elif level == "WARN":
+                level_colored = f"{RED}[{level}]{RESET}"
+            else:
+                level_colored = f"[{level}]"
+            
+            print(f"{level_colored} {message}")
+
     def _select_compiler(self, forced_compiler: Optional[str]) -> str:
         if forced_compiler:
             compiler_name = forced_compiler.lower()
@@ -839,111 +937,53 @@ class StandaloneCompiler:
             return result.returncode == 0
         except Exception:
             return False
-    
-    def _detect_linker(self) -> str:
-        try:
-            if self.is_windows:
-                result = subprocess.run(['gcc.exe', '--version'], capture_output=True, text=True, timeout=5)
-                if result.returncode == 0:
-                    return 'gcc'
-                result = subprocess.run(['clang.exe', '--version'], capture_output=True, text=True, timeout=5)
-                if result.returncode == 0:
-                    return 'clang'
-            else:
-                result = subprocess.run(['gcc', '--version'], capture_output=True, text=True, timeout=5)
-                if result.returncode == 0:
-                    return 'gcc'
-                result = subprocess.run(['clang', '--version'], capture_output=True, text=True, timeout=5)
-                if result.returncode == 0:
-                    return 'clang'
-                result = subprocess.run(['lld', '--version'], capture_output=True, text=True, timeout=5)
-                if result.returncode == 0:
-                    return 'lld'
-        except Exception:
-            pass
-        return 'gcc'
-    
+
     def _get_compiler_flags(self) -> str:
-        """Get optimization compiler flags"""
         env_cflags = os.getenv('CBLERR_CFLAGS')
         if env_cflags:
             return env_cflags
         
-        if self.compiler_type == 'gcc':
-            return '-std=c11 -Os -s -fno-ident -fno-asynchronous-unwind-tables' if self.is_windows else '-std=c11 -O2 -s -ffunction-sections -fdata-sections'
-        elif self.compiler_type == 'clang':
-            return '-std=c11 -O2 -s -ffunction-sections -fdata-sections'
-        return '-std=c11 -O2 -s -ffunction-sections -fdata-sections'
+        flags = '-std=c11 -Os -s -ffunction-sections -fdata-sections -fno-ident'
+        
+        if self.is_windows:
+            flags += ' -fno-asynchronous-unwind-tables -fno-unwind-tables -fomit-frame-pointer -mno-stack-arg-probe -fno-math-errno'
+            
+        return flags
     
     def _get_linker_flags(self) -> str:
-        """Generate linker flags based on compiler type and link_mode"""
         flags = []
         
-        if self.compiler_type == 'gcc':
-            if self.link_mode == 'static':
+        if self.is_windows:
+            # ИСПОЛЬЗУЕМ -nostartfiles ВМЕСТО -nostdlib ЧТОБЫ РАЗРЕШИТЬ МАТЕМАТИКУ (sin, cos)
+            flags.append('-nostartfiles')
+            flags.append('-Wl,--entry=CblerrStartup')
+            
+        if self.compiler_type in ('gcc', 'clang', 'lld'):
+            if self.link_mode == 'static' and not self.is_windows:
                 flags.append('-static')
-                flags.append('-Wl,--gc-sections')
-                flags.append('-Wl,--section-alignment=4096')
-            elif self.link_mode == 'dynamic':
-                flags.append('-shared-libgcc')
+                
+            flags.append('-Wl,--gc-sections')
+            
+            if self.is_windows:
+                flags.append('-Wl,--build-id=none')
+                flags.append('-Wl,--no-seh')
                 flags.append('-Wl,--file-alignment=512')
                 flags.append('-Wl,--section-alignment=4096')
-                flags.append('-Wl,--strip-all')
-                flags.append('-Wl,--as-needed')
-                flags.append('-Wl,--gc-sections')
-            else:
-                flags.append('-Wl,--gc-sections')
-                if self.is_windows:
-                    flags.append('-Wl,--nmagic')
-                flags.append('-Wl,--file-alignment=512')
-                flags.append('-Wl,--section-alignment=4096')
-        
-        elif self.compiler_type == 'clang':
-            if self.link_mode == 'static':
-                flags.append('-static')
-                flags.append('-Wl,--gc-sections')
-                flags.append('-Wl,--section-alignment=4096')
-            elif self.link_mode == 'dynamic':
-                flags.append('-shared-libgcc')
-                flags.append('-Wl,--file-alignment=512')
-                flags.append('-Wl,--section-alignment=4096')
-                flags.append('-Wl,--strip-all')
-                flags.append('-Wl,--as-needed')
-                flags.append('-Wl,--gc-sections')
-            else:
-                flags.append('-Wl,--gc-sections')
-                flags.append('-Wl,--file-alignment=512')
-                flags.append('-Wl,--section-alignment=4096')
+                
+        if getattr(self, 'is_gui_app', False) and self.is_windows:
+            flags.append('-mwindows')
         
         if self.stack_reserve:
             flags.append(f'-Wl,--stack,{self.stack_reserve}')
         
         return ' '.join(flags)
-    
-    def log(self, message: str, level: str = "INFO"):
-        if self.verbose:
-            message = message.replace("✓", "[OK]").replace("✗", "[FAIL]")
-            
-            MAGENTA = "\033[35m"  
-            CYAN = "\033[36m"    
-            RED = "\033[31m"     
-            RESET = "\033[0m"    
-            
-            message = re.sub(r'\[(\d+)/(\d+)\]', f'{CYAN}[\\1/\\2]{RESET}', message)
-            
-            message = re.sub(r'\[INFO\]', f'{CYAN}[INFO]{RESET}', message)
-            
-            if level == "INFO":
-                level_colored = f"{MAGENTA}[{level}]{RESET}"
-            elif level == "WARN":
-                level_colored = f"{RED}[{level}]{RESET}"
-            else:
-                level_colored = f"[{level}]"
-            
-            print(f"{level_colored} {message}")
 
     def _handle_compile_error(self, error_output: str, debugger) -> bool:
         try:
+            if "undefined reference" in error_output or "ld returned 1" in error_output:
+                print(f"\n\033[31m[ОШИБКА ЛИНКЕРА (ld)]\033[0m\n{error_output.strip()}", file=sys.stderr)
+                return True
+
             if 'implicit declaration of function' in error_output.lower():
                 m = re.search(r"implicit declaration of function '([^']+)'", error_output, flags=re.I)
                 if m:
@@ -1042,10 +1082,13 @@ class StandaloneCompiler:
             try:
                 from core.flux_ast import Return, Literal
                 main_fn = None
+                self.is_gui_app = False
+                
                 for fn in ast.functions:
                     if fn.name == 'main':
                         main_fn = fn
-                        break
+                    elif fn.name == 'WinMain':
+                        self.is_gui_app = True
 
                 if main_fn and not getattr(main_fn, 'is_extern', False):
                     found_return0 = False
@@ -1066,7 +1109,7 @@ class StandaloneCompiler:
                 return False
 
             self.log("\n[4/4] Генерирую код...")
-            generator = CCodeGenerator(link_mode=self.link_mode)
+            generator = CCodeGenerator(link_mode=self.link_mode, is_gui_app=getattr(self, 'is_gui_app', False))
             c_code = generator.generate(ast)
 
             with open(self.c_file, 'w', encoding='utf-8') as f:
@@ -1136,13 +1179,19 @@ class StandaloneCompiler:
             if runtime_c.exists():
                 srcs.append(str(runtime_c))
 
-            msvc_compile_flags = '/O2'
-            msvc_compile_flags += ' /GR-'
-            msvc_link_flags = '/INCREMENTAL:NO /OPT:REF /OPT:ICF /ALIGN:4096'
+            msvc_compile_flags = '/O2 /GS- /GR- /Zc:threadSafeInit- /Oi /Os /Gy'
+            msvc_link_flags = '/NODEFAULTLIB /INCREMENTAL:NO /OPT:REF /OPT:ICF /ALIGN:16'
+            
+            if getattr(self, 'is_gui_app', False):
+                msvc_link_flags += ' /SUBSYSTEM:WINDOWS /ENTRY:CblerrStartup'
+            else:
+                msvc_link_flags += ' /SUBSYSTEM:CONSOLE /ENTRY:CblerrStartup'
+                
             if self.stack_reserve:
                 msvc_link_flags += f' /STACK:{self.stack_reserve}'
 
-            libs = ['kernel32.lib', 'user32.lib', 'winmm.lib', 'gdi32.lib', 'msvcrt.lib']
+            # ДОБАВЛЕНЫ opengl32.lib И winmm.lib ДЛЯ ЗВУКА И 3D
+            libs = ['opengl32.lib', 'winmm.lib', 'kernel32.lib', 'user32.lib', 'msvcrt.lib', 'gdi32.lib']
 
             cmd = [cl_exe] + msvc_compile_flags.split() + srcs + [f'/Fe{self.output_exe}', '/link'] + msvc_link_flags.split() + libs
             
@@ -1158,12 +1207,8 @@ class StandaloneCompiler:
                     if keep:
                         self.log(f"  Оставляю Си файл из - за флага -c: {self.c_file}")
                     else:
-                        if self.c_file.exists():
-                            os.remove(self.c_file)
-                            self.log(f"  Удалены временные файлы: {self.c_file}")
-                        if self.obj_file.exists():
-                            os.remove(self.obj_file)
-                            self.log(f"  Удалены дополнительные временные данные: {self.obj_file}")
+                        if self.c_file.exists(): os.remove(self.c_file)
+                        if self.obj_file.exists(): os.remove(self.obj_file)
                 except Exception as e:
                     self.log(f"  Ошибка удаления: {e}", "WARN")
                 return True
@@ -1181,74 +1226,38 @@ class StandaloneCompiler:
         self.log("Пробую MinGW (gcc.exe)...")
         
         try:
-            runtime_c = Path(__file__).parent.parent / 'lib' / 'cblerr_engine_runtime.c'
             srcs = [str(self.c_file)]
-            runtime_archive = None
-            if runtime_c.exists():
-                if self.link_mode == 'static':
-                    runtime_archive = self._prepare_runtime_archive(runtime_c)
-                else:
-                    srcs.append(str(runtime_c))
-
-            libs = ['-luser32', '-lkernel32', '-lwinmm', '-lgdi32', '-lopengl32', '-lm']
+            
+            if self.is_windows:
+                # ДОБАВЛЕНЫ -lopengl32 И -lwinmm ДЛЯ ЗВУКА И 3D
+                libs = ['-lopengl32', '-lwinmm', '-lmsvcrt', '-lkernel32', '-luser32', '-lgdi32']
+            else:
+                libs = ['-lm', '-lc']
 
             cflags_str = self._get_compiler_flags()
             ldflags_str = self._get_linker_flags()
-            
-            if self.link_mode == 'static' and runtime_archive and runtime_archive.exists():
-                ldflags_str += f' -Wl,--whole-archive {runtime_archive} -Wl,--no-whole-archive'
-            elif self.link_mode == 'dynamic':
-                implib = f'lib{self.output_exe.stem}.a'
-                ldflags_str += f' -Wl,--out-implib,{implib}'
 
             cmd = ['gcc.exe'] + cflags_str.split() + srcs + ['-o', str(self.output_exe)] + ldflags_str.split() + libs
 
-            self.log(f"  Запускаю: gcc.exe для компиляции кода...")
+            self.log(f"  Запускаю: gcc.exe для компиляции кода (Ультра-размер)...")
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
             exe_found = self.output_exe.exists() or (self.is_windows and self.output_exe.with_suffix('.exe').exists())
 
             if result.returncode == 0 and exe_found:
                 try:
-                    exe_p = self.output_exe if self.output_exe.exists() else (self.output_exe.with_suffix('.exe') if self.output_exe.with_suffix('.exe').exists() else self.output_exe)
-                    try:
-                        od = subprocess.run(['objdump','-h',str(exe_p)], capture_output=True, text=True, timeout=15)
-                        if od.returncode==0 and od.stdout:
-                            sizes = re.findall(r'^\s*\d+\s+\S+\s+([0-9A-Fa-f]+)', od.stdout, flags=re.M)
-                            if sizes:
-                                total = sum(int(x,16) for x in sizes)
-                                phys = os.path.getsize(str(exe_p))
-                                self.log(f"Размер чистого кода: {total/1024.0:.2f} КБ")
-                                self.log(f"Мусор (Заголовки/Отступы): {(phys-total)/1024.0:.2f} КБ")
-                            else:
-                                print("Вес файла не был определен!")
-                        else:
-                            print("Вес файла не был определен!")
-                    except Exception:
-                        print("Вес файла не был определен!")
+                    exe_p = self.output_exe if self.output_exe.exists() else self.output_exe.with_suffix('.exe')
+                    phys = os.path.getsize(str(exe_p))
+                    self.log(f"Размер итогового файла: {phys/1024.0:.2f} КБ")
 
                     keep = SAVE_C_FLAG or os.getenv('CBLERR_KEEP_C', '0') == '1'
                     if keep:
                         self.log(f"  Оставляю временный Си файл: {self.c_file}")
                     else:
-                        if self.c_file.exists():
-                            os.remove(self.c_file)
-                            self.log(f"  Удалены временные файлы: {self.c_file}")
-                        if self.obj_file.exists():
-                            os.remove(self.obj_file)
-                            self.log(f"  Удалены дополнительные временные файлы: {self.obj_file}")
-                        try:
-                            if runtime_archive and runtime_archive.exists():
-                                os.remove(runtime_archive)
-                                self.log(f"  Удалён архив среды выполнения.: {runtime_archive}")
-                            runtime_o = self.temp_dir / f"{Path(runtime_c).stem}.o"
-                            if runtime_o.exists():
-                                os.remove(runtime_o)
-                                self.log(f"  Удалён объект времени выполнения: {runtime_o}")
-                        except Exception:
-                            pass
+                        if self.c_file.exists(): os.remove(self.c_file)
+                        if self.obj_file.exists(): os.remove(self.obj_file)
                 except Exception as e:
-                    self.log(f"  Ошибка удаления: {e}", "WARN")
+                    pass
                 return True
             else:
                 combined = (result.stdout or "") + ("\n" if result.stdout and result.stderr else "") + (result.stderr or "")
@@ -1263,66 +1272,22 @@ class StandaloneCompiler:
             self.log(f"  Ошибка MinGW: {e}", "WARN")
             return False
 
-    def _prepare_runtime_archive(self, runtime_c: Path) -> Optional[Path]:
-        try:
-            runtime_c = Path(runtime_c)
-            if not runtime_c.exists():
-                return None
-            runtime_o = self.temp_dir / f"{runtime_c.stem}.o"
-            runtime_a = self.temp_dir / f"lib{runtime_c.stem}.a"
-
-            cc = ['gcc', '-c', str(runtime_c), '-o', str(runtime_o), '-std=c11', '-O2', '-fdata-sections', '-ffunction-sections']
-            self.log(f"  Подготавливаем среду выполнения...")
-            r = subprocess.run(cc, capture_output=True, text=True, timeout=30)
-            if r.returncode != 0:
-                self.log(f"  Компиляция во время выполнения завершилась с ошибкой.: {(r.stdout or '') + (r.stderr or '')}", "WARN")
-                return None
-
-            ar = ['ar', 'rcs', str(runtime_a), str(runtime_o)]
-            self.log(f"  Архивирование среды выполнения...")
-            r2 = subprocess.run(ar, capture_output=True, text=True, timeout=30)
-            if r2.returncode != 0:
-                self.log(f"  Архивирование среды выполнения не удалось: {(r2.stdout or '') + (r2.stderr or '')}", "WARN")
-                return None
-
-            return runtime_a
-        except FileNotFoundError:
-            self.log("  Компилятор 'gcc' или 'ar' не найден при подготовке архива среды выполнения.", "WARN")
-            return None
-        except Exception as e:
-            self.log(f"  Ошибка архива времени выполнения: {e}", "WARN")
-            return None
-    
     def _compile_gcc(self) -> bool:
-        self.log("Пробую GCC...")
+        self.log("Пробую GCC (Linux)...")
         
         try:
-            runtime_c = Path(__file__).parent.parent / 'lib' / 'cblerr_engine_runtime.c'
             srcs = [str(self.c_file)]
-            runtime_archive = None
-            if runtime_c.exists():
-                if self.link_mode == 'static':
-                    runtime_archive = self._prepare_runtime_archive(runtime_c)
-                else:
-                    srcs.append(str(runtime_c))
-
             libs = ['-lm', '-lc']
 
             cflags_str = self._get_compiler_flags()
             ldflags_str = self._get_linker_flags()
             
-            if self.link_mode == 'static' and runtime_archive and runtime_archive.exists():
-                ldflags_str += f' -Wl,--whole-archive {runtime_archive} -Wl,--no-whole-archive'
-            elif self.link_mode == 'dynamic':
-                implib = f'lib{self.output_exe.stem}.a'
-                ldflags_str += f' -Wl,--out-implib,{implib}'
-
             cmd = ['gcc'] + cflags_str.split() + srcs + ['-o', str(self.output_exe)] + ldflags_str.split() + libs
 
             self.log(f"  Запускаю: gcc для компиляции кода...")
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
 
-            exe_found = self.output_exe.exists() or (self.is_windows and self.output_exe.with_suffix('.exe').exists())
+            exe_found = self.output_exe.exists()
 
             if result.returncode == 0 and exe_found:
                 self.log(f"  Компиляция через GCC успешна!")
@@ -1344,26 +1309,15 @@ class StandaloneCompiler:
         self.log("Пробую Clang...")
         
         try:
-            runtime_c = Path(__file__).parent.parent / 'lib' / 'cblerr_engine_runtime.c'
             srcs = [str(self.c_file)]
-            runtime_archive = None
-            if runtime_c.exists():
-                if self.link_mode == 'static':
-                    runtime_archive = self._prepare_runtime_archive(runtime_c)
-                else:
-                    srcs.append(str(runtime_c))
-
-            libs = ['-lm', '-lc']
+            if self.is_windows:
+                libs = ['-lopengl32', '-lwinmm', '-lkernel32', '-luser32', '-lmsvcrt', '-lgdi32']
+            else:
+                libs = ['-lm', '-lc']
 
             cflags_str = self._get_compiler_flags()
             ldflags_str = self._get_linker_flags()
             
-            if self.link_mode == 'static' and runtime_archive and runtime_archive.exists():
-                ldflags_str += f' -Wl,--whole-archive {runtime_archive} -Wl,--no-whole-archive'
-            elif self.link_mode == 'dynamic':
-                implib = f'lib{self.output_exe.stem}.a'
-                ldflags_str += f' -Wl,--out-implib,{implib}'
-
             clang_cmd = 'clang.exe' if self.is_windows else 'clang'
             cmd = [clang_cmd] + cflags_str.split() + srcs + ['-o', str(self.output_exe)] + ldflags_str.split() + libs
 
@@ -1390,51 +1344,7 @@ class StandaloneCompiler:
     
     def _compile_lld(self) -> bool:
         self.log("Пробую LLD...")
-        
-        try:
-            runtime_c = Path(__file__).parent.parent / 'lib' / 'cblerr_engine_runtime.c'
-            srcs = [str(self.c_file)]
-            runtime_archive = None
-            if runtime_c.exists():
-                if self.link_mode == 'static':
-                    runtime_archive = self._prepare_runtime_archive(runtime_c)
-                else:
-                    srcs.append(str(runtime_c))
-
-            libs = ['-lm', '-lc']
-
-            cflags_str = self._get_compiler_flags()
-            ldflags_str = self._get_linker_flags()
-            
-            if self.link_mode == 'static' and runtime_archive and runtime_archive.exists():
-                ldflags_str += f' -Wl,--whole-archive {runtime_archive} -Wl,--no-whole-archive'
-            elif self.link_mode == 'dynamic':
-                implib = f'lib{self.output_exe.stem}.a'
-                ldflags_str += f' -Wl,--out-implib,{implib}'
-
-            clang_cmd = 'clang.exe' if self.is_windows else 'clang'
-            cmd = [clang_cmd] + cflags_str.split() + srcs + ['-o', str(self.output_exe)] + ldflags_str.split() + libs
-
-            self.log(f"  Запускаю: {clang_cmd}+lld для компиляции кода...")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-
-            exe_found = self.output_exe.exists() or (self.is_windows and self.output_exe.with_suffix('.exe').exists())
-
-            if result.returncode == 0 and exe_found:
-                self.log(f"  Компиляция через LLD успешна!")
-                return True
-            else:
-                combined = (result.stdout or "") + ("\n" if result.stdout and result.stderr else "") + (result.stderr or "")
-                if not self._handle_compile_error(combined, self.debugger):
-                    self.log(f"  Компиляция через LLD не удалась: {combined}", "WARN")
-                return False
-                
-        except FileNotFoundError:
-            self.log("  LLD не найден!", "WARN")
-            return False
-        except Exception as e:
-            self.log(f"  Ошибка LLD: {e}", "WARN")
-            return False
+        return self._compile_clang()  
     
     def _find_msvc_cl(self) -> Optional[str]:
         common_paths = [
@@ -1442,11 +1352,9 @@ class StandaloneCompiler:
             r"C:\Program Files (x86)\Microsoft Visual Studio\2019\Community\VC\Tools\MSVC\14.29.30133\bin\Hostx64\x64\cl.exe",
             r"C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\MSVC\14.39.33519\bin\Hostx64\x64\cl.exe",
         ]
-        
         for path in common_paths:
             if Path(path).exists():
                 return path
-        
         try:
             result = subprocess.run(['where', 'cl.exe'], capture_output=True, text=True)
             if result.returncode == 0:
@@ -1455,6 +1363,7 @@ class StandaloneCompiler:
             pass
         
         return None
+
 
 def main():
     if len(sys.argv) < 2:
