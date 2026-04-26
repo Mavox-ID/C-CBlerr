@@ -145,6 +145,7 @@ class CCodeGenerator:
         self.emit_line("extern int fputc(int, void*);")
         self.emit_line("extern int feof(void*);")
         self.emit_line("extern int system(const char*);")
+        self.emit_line("extern double pow(double, double);")
         self.emit_line("")
         
         self.emit_line("#if defined(_WIN32) || defined(__WIN32__)")
@@ -571,6 +572,10 @@ class CCodeGenerator:
         elif isinstance(expr, BinaryOp):
             left = self.generate_expression(expr.left)
             right = self.generate_expression(expr.right)
+
+            if expr.op == '**':
+                return f"pow({left}, {right})"
+
             op_map = {
                 '+': '+', '-': '-', '*': '*', '/': '/',
                 '%': '%', '&': '&', '|': '|', '^': '^',

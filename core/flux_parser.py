@@ -722,8 +722,16 @@ class Parser:
         return left
 
     def parse_multiplicative(self):
-        left = self.parse_unary()
+        left = self.parse_power()
         while self.current_token() and self.current_token().type in (TokenType.MULTIPLY, TokenType.DIVIDE, TokenType.MODULO):
+            t = self.advance()
+            right = self.parse_power()
+            left = BinaryOp(t.value, left, right)
+        return left
+
+    def parse_power(self):
+        left = self.parse_unary()
+        while self.current_token() and self.current_token().type == TokenType.POW:
             t = self.advance()
             right = self.parse_unary()
             left = BinaryOp(t.value, left, right)
