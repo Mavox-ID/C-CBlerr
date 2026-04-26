@@ -437,11 +437,17 @@ class Parser:
             if kind == 'assign':
                 left = self.parse_atom_or_access_simple()
                 if not self.current_token():
-                    raise SyntaxError('Unexpected EOF after lvalue')
+                    raise SyntaxError('Неожиданный EOF после имени переменной')
                 if self.current_token().type in (TokenType.ASSIGN, TokenType.PLUS_ASSIGN, TokenType.MINUS_ASSIGN, TokenType.WALRUS):
                     op = self.current_token().type
                     self.advance()
                     val = self.parse_expression()
+                    
+                    if op == TokenType.PLUS_ASSIGN:
+                        val = BinaryOp('+', left, val)
+                    elif op == TokenType.MINUS_ASSIGN:
+                        val = BinaryOp('-', left, val)
+                        
                     if isinstance(left, Variable):
                         return Assign(left.name, val)
                     return Assign(left, val)
@@ -450,8 +456,15 @@ class Parser:
             return self.parse_expression()
         expr = self.parse_unary()
         if self.current_token() and self.current_token().type in (TokenType.ASSIGN, TokenType.PLUS_ASSIGN, TokenType.MINUS_ASSIGN):
+            op = self.current_token().type
             self.advance()
             val = self.parse_expression()
+            
+            if op == TokenType.PLUS_ASSIGN:
+                val = BinaryOp('+', expr, val)
+            elif op == TokenType.MINUS_ASSIGN:
+                val = BinaryOp('-', expr, val)
+                
             if isinstance(expr, Variable):
                 return Assign(expr.name, val)
             return Assign(expr, val)

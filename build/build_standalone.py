@@ -368,6 +368,8 @@ class CCodeGenerator:
             self.generate_match(stmt)
         elif isinstance(stmt, EnumDef):
             self.generate_enum(stmt)
+        elif isinstance(stmt, InlineAsm):
+            self.emit_line(f'__asm__("{self._escape_string(stmt.code)}");')
         elif isinstance(stmt, BreakStmt):
             self.emit_line("break;")
         elif isinstance(stmt, ContinueStmt):
@@ -602,6 +604,10 @@ class CCodeGenerator:
                 return f"({left} {op} {right})"
         
         elif isinstance(expr, LogicalOp):
+            if expr.op == 'not':
+                left = self.generate_expression(expr.left)
+                return f"(!{left})"
+                
             left = self.generate_expression(expr.left)
             right = self.generate_expression(expr.right)
             op = '&&' if expr.op == 'and' else '||'
