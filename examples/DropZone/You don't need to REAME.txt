@@ -1,3 +1,0 @@
-DropZone is an example of what CBlerr can do with the Win32 API.
-The extremely small executable file, along with nice animation and blurring effects,
-shows that it is possible to write commercial-grade software using CBlerr without any large frameworks.
