@@ -1,3 +1,6 @@
+# Git Ignore File For C-CBlerr Github Repo
+# TODO
+
 # Python
 __pycache__/
 *.pyc
