@@ -1,0 +1,1 @@
+"SafeWin.exe" is the smallest .exe made on 24.04.2026. The size is 2KB/KiB. Could i just go sleep?

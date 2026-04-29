@@ -1,0 +1,3 @@
+This program highlights the maximum speed capability of 
+CBlerr to calculate 100M Fibonacci numbers in one shot, with an average running time of around 160ms, 
+thereby achieving a phenomenal efficiency of 1.6ns per operation.
