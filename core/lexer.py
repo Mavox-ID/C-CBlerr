@@ -35,7 +35,7 @@ class TokenType(Enum):
     I16 = auto()
     I32 = auto()
     I64 = auto()
-    ASM = auto() #хахахахахахах ассемблер хахахахахахах сука какой же гений придумал это слово хахахахахахах CBLERRV5.1 - это шедевр, который будет жить вечно хахахахахахах типо C и ассемблер хахахаха только синтаксис питона хахахах поняли??? хахахахахахахахахахахахахахахаха лол 
+    ASM = auto()
     COMPTIME = auto()
     AS = auto()
     PACKED = auto()
@@ -289,14 +289,14 @@ class Lexer:
                     if next_char:
                         self.advance()
             elif self.current_char() == '\n':
-                self._add_error(f"Незакрытая строка на строке {start_line}")
+                self._add_error(f"Unclosed string at line {start_line}")
                 break
             else:
                 result += self.advance()
         if self.current_char() == quote_char:
             self.advance()
         else:
-            self._add_error(f"Незакрытая строка, начата на {start_line}:{start_col}")
+            self._add_error(f"Unclosed string, started at {start_line}:{start_col}")
         return Token(TokenType.STRING, result, start_line, start_col, self.column)
 
     def process_indent(self, indent_level: int) -> None:
@@ -309,7 +309,7 @@ class Lexer:
                 self.indent_stack.pop()
                 self.tokens.append(Token(TokenType.DEDENT, None, self.line, 0))
             if self.indent_stack and self.indent_stack[-1] != indent_level:
-                self._add_error(f"Некорректный уровень отступа на строке {self.line}")
+                self._add_error(f"Incorrect indentation level at line {self.line}")
 
     def _add_error(self, message: str) -> None:
         self.errors.append((self.line, self.column, message))
@@ -469,7 +469,7 @@ class Lexer:
                 self.tokens.append(Token(TokenType.GT, '>', self.line, col))
             elif char == '!':
                 self.advance()
-                self._add_error(f"Неожиданный символ '!' на строке {self.line}, колонка {col}")
+                self._add_error(f"Unexpected character '!' at line {self.line}, column {col}")
                 self.tokens.append(Token(TokenType.ERROR, '!', self.line, col))
             elif char == '.':
                 self.advance()
@@ -486,7 +486,7 @@ class Lexer:
                         self.nesting_level -= 1
             else:
                 self.advance()
-                self._add_error(f"Неизвестный символ '{char}' на строке {self.line}, колонка {col}")
+                self._add_error(f"Unknown character '{char}' at line {self.line}, column {col}")
                 self.tokens.append(Token(TokenType.ERROR, char, self.line, col))
         while len(self.indent_stack) > 1:
             self.indent_stack.pop()

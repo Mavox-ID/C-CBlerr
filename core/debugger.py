@@ -198,7 +198,7 @@ class CrashContext:
     memory_info: Dict[str, Any]
     elapsed_time: float
 
-class GameDebugger: #типо игра хахахахахахах
+class GameDebugger:
 
     _COLORS = {
         'RESET': '\033[0m',
@@ -251,7 +251,7 @@ class GameDebugger: #типо игра хахахахахахах
             with open(self.log_file, 'a', encoding='utf-8') as f:
                 f.write(message + '\n')
         except IOError as e:
-            print(f"Предупреждение: Не удалось записать данные в файл журнала: {e}")
+            print(f"Warning: Failed to write data to the log file: {e}")
 
     def _format_message(
         self,
@@ -264,8 +264,8 @@ class GameDebugger: #типо игра хахахахахахах
         elapsed = time.time() - self.start_time
 
         level_names = {
-            DebugLevel.ERROR: 'ERROR',
-            DebugLevel.WARNING: 'WARN',
+            DebugLevel.ERROR: 'Error',
+            DebugLevel.WARNING: 'Warn',
             DebugLevel.INFO: 'INFO',
             DebugLevel.VERBOSE: 'VERB',
             DebugLevel.TRACE: 'TRACE',
@@ -369,7 +369,7 @@ class GameDebugger: #типо игра хахахахахахах
                 'vms_mb': process.memory_info().vms / (1024 * 1024),
             }
         except ImportError:
-            memory_info = {'note': 'psutil не установлен, информация о памяти недоступна, установи psutil'}
+            memory_info = {'note': 'psutil not found'}
 
         return CrashContext(
             timestamp=datetime.now(),
@@ -384,54 +384,54 @@ class GameDebugger: #типо игра хахахахахахах
 
         context = self.capture_crash_context(exc)
 
-        self.log_error("Критическая ошибка произошла! ")
+        self.log_error("Critical Error! ")
 
-        self.log_error(f"Тип исключения: {context.exception_type}")
-        self.log_error(f"Сообщение исключения: {context.exception_message}")
-        self.log_error(f"Временная метка: {context.timestamp.isoformat()}")
-        self.log_error(f"Затраченное время: {context.elapsed_time:.3f}с")
+        self.log_error(f"Exception Type: {context.exception_type}")
+        self.log_error(f"Exception Message: {context.exception_message}")
+        self.log_error(f"Timestamp: {context.timestamp.isoformat()}")
+        self.log_error(f"Elapsed Time: {context.elapsed_time: .3f}s")
 
-        self.log_error("\nСтек вызовов:")
+        self.log_error("\nStack call:")
         for i, frame in enumerate(context.stack_frames, 1):
-            self.log_error(f"\n  Кадр {i}: {frame.function} ({frame.filename}:{frame.lineno})")
+            self.log_error(f"\n  Frame {i}: {frame.function} ({frame.filename}:{frame.lineno})")
             if frame.code:
-                self.log_error(f"    Код: {frame.code}")
+                self.log_error(f"    Code: {frame.code}")
             if frame.locals_dict:
-                self.log_error("    Локальные переменные:")
+                self.log_error("    Local variable:")
                 for var_name, var_value in frame.locals_dict.items():
                     self.log_error(f"      {var_name} = {var_value}")
 
         if context.memory_info:
-            self.log_error(f"\nИнформация о памяти:")
+            self.log_error(f"\nMemory information:")
             for key, value in context.memory_info.items():
                 self.log_error(f"  {key}: {value}")
 
         self.log_error("\n" + "=" * 80)
-        self.log_error(f"Тотальных ошибок: {self.error_count}")
-        self.log_error(f"Всего предупреждений: {self.warning_count}")
-        self.log_error(f"Файл журнала: {self.log_file.absolute()}")
+        self.log_error(f"Total errors: {self.error_count}")
+        self.log_error(f"Total warnings: {self.warning_count}")
+        self.log_error(f"Log file: {self.log_file.absolute()}")
 
     def watch_memory(self, address: int) -> None:
 
         self.memory_watches[address] = time.time()
-        self.log_verbose(f"Просмотр памяти добавлен: 0x{address:x}")
+        self.log_verbose(f"Memory watch added: 0x{address:x}")
 
     def get_summary(self) -> str:
 
         elapsed = time.time() - self.start_time
         summary_lines = [
             "",
-            "|" + "Отчет по отладке".center(78) + "|",
-            f"  Оставшееся время: {elapsed:.3f}s",
-            f"  Ошибки:       {self.error_count}",
-            f"  Предупреждения:     {self.warning_count}",
-            f"  Файл журнала:     {self.log_file.absolute()}",
+            "|" + "Debug Report".center(78) + "|",
+            f"  Elapsed time: {elapsed:.3f}s",
+            f"  Errors:       {self.error_count}",
+            f"  Warnings:     {self.warning_count}",
+            f"  Log file:     {self.log_file.absolute()}",
         ]
         return "\n".join(summary_lines)
 
     def __enter__(self):
 
-        self.log_info("Начало отладочной сессии")
+        self.log_info("Debug session started")
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -439,17 +439,17 @@ class GameDebugger: #типо игра хахахахахахах
         if exc_type is not None:
             self.critical_dump(exc_val)
         else:
-            self.log_info("Отладочная сессия завершена успешно")
+            self.log_info("Debug session completed successfully")
         return False
 
     def display_syntax_error(self, exc: Exception, source: Optional[str] = None, filename: Optional[str] = None) -> None:
 
-        msg = str(exc) if exc is not None else "Ошибка"
+        msg = str(exc) if exc is not None else "Error"
 
         if self.use_colors and COLORS_SUPPORTED:
-            print(color_red("[ОШИБКА]") + f" {msg}", file=sys.stderr)
+            print(color_red("[ERROR]") + f" {msg}", file=sys.stderr)
         else:
-            print(f"[ОШИБКА] {msg}", file=sys.stderr)
+            print(f"[ERROR] {msg}", file=sys.stderr)
 
         lineno = None
         start_col = None
@@ -532,34 +532,24 @@ class GameDebugger: #типо игра хахахахахахах
             fix = None
             hint = None
             
-            if re.search(r'Unknown|Неизвестн|Unexpected token|Неожиданный', msg, flags=re.I):
-                reason = 'Неверный или неожиданный фрагмент кода'
+            if re.search(r'Unknown|Unexpected token', msg, flags=re.I):
+                reason = 'Invalid or unexpected code fragment'
             
             m_unknown = re.search(r"'([^']+)'", msg)
             if m_unknown:
                 unknown_token = m_unknown.group(1)
                 closest = _find_closest_match(unknown_token, KNOWN_KEYWORDS, max_distance=3)
                 if closest:
-                    hint = f'Возможно, вы имели в виду: "{closest}"'
+                    hint = f'Did you mean: "{closest}"'
             
             if 'endofcode' in (source or '') and 'return 0' in (source or ''):
-                fix = 'Используйте корректное ключевое слово'
+                fix = 'Use a valid keyword'
             
             if reason:
                 if self.use_colors and COLORS_SUPPORTED:
-                    print(color_yellow("[ПРИЧИНА]") + f" {reason}", file=sys.stderr)
+                    print(color_yellow("[REASON]") + f" {reason}", file=sys.stderr)
                 else:
-                    print(f"[ПРИЧИНА] {reason}", file=sys.stderr)
-            if fix:
-                if self.use_colors and COLORS_SUPPORTED:
-                    print(color_yellow("[КАК ИСПРАВИТЬ]") + f" {fix}", file=sys.stderr)
-                else:
-                    print(f"[КАК ИСПРАВИТЬ] {fix}", file=sys.stderr)
-            if hint:
-                if self.use_colors and COLORS_SUPPORTED:
-                    print(color_yellow("[ПОДСКАЗКА]") + f" {hint}", file=sys.stderr)
-                else:
-                    print(f"[ПОДСКАЗКА] {hint}", file=sys.stderr)
+                    print(f"[REASON] {reason}", file=sys.stderr)
         except Exception:
             pass
 

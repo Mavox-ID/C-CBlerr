@@ -34,9 +34,9 @@ class Parser:
     def expect(self, token_type: TokenType, error_msg: str = None, strict: bool = True):
         token = self.current_token()
         if not token or token.type != token_type:
-            msg = error_msg or f"Ожидался {token_type}, получено {token.type if token else 'EOF'}"
+            msg = error_msg or f"Expected {token_type}, got {token.type if token else 'EOF'}"
             if strict:
-                raise SyntaxError(f"{msg} на линии {token.line if token else '?'}")
+                raise SyntaxError(f"{msg} at line {token.line if token else '?'}")
             else:
                 self.debugger.log_warning(msg)
                 return token
@@ -141,23 +141,23 @@ class Parser:
                 if self.current_token() and self.current_token().type == TokenType.GT:
                     self.advance()
                 else:
-                    self.debugger.log_warning(f"Ожидается '>' после универсальных типов для {name}")
+                    self.debugger.log_warning(f"Expected '>' after generic types for {name}")
                 return GenericType(name, args)
 
             return name
 
         if token:
-            raise SyntaxError(f"Неизвестный токен типа: {token.type} (value={token.value}) на линии {token.line}")
+            raise SyntaxError(f"Unknown token type: {token.type} (value={token.value}) at line {token.line}")
             self.advance()
             return token.value
 
-        raise SyntaxError("Ожидается тип, но достигнут конец файла (EOF)")
+        raise SyntaxError("Expected type but reached end of file (EOF)")
 
     def parse_import(self):
-        self.expect(TokenType.IMPORT, "Ожидается 'import'")
+        self.expect(TokenType.IMPORT, "Expected 'import'")
         token = self.current_token()
         if not token:
-            raise SyntaxError("Ожидается имя модуля после import, но достигнут EOF")
+            raise SyntaxError("Expected module name after import, but reached EOF")
         if token.type == TokenType.STRING:
             module_name = token.value
             self.advance()
@@ -165,17 +165,17 @@ class Parser:
             module_name = token.value
             self.advance()
         else:
-            self.debugger.log_warning("Ожидается имя или строка после import")
+            self.debugger.log_warning("Expected name or string after import")
             module_name = token.value if getattr(token, 'value', None) is not None else ''
             self.advance()
         from core.flux_ast import ImportStmt
         return ImportStmt(module_name, None)
 
     def parse_from_import(self):
-        self.expect(TokenType.FROM, "Ожидается 'from'")
+        self.expect(TokenType.FROM, "Expected 'from'")
         token = self.current_token()
         if not token:
-            raise SyntaxError("Ожидается имя модуля после from, но достигнут EOF")
+            raise SyntaxError("Expected module name after from, but reached EOF")
         if token.type == TokenType.STRING:
             module = token.value
             self.advance()
@@ -183,11 +183,11 @@ class Parser:
             module = token.value
             self.advance()
         else:
-            raise SyntaxError("Ожидается имя или строка после from")
-        self.expect(TokenType.IMPORT, "Ожидается 'import' после имени модуля")
+            raise SyntaxError("Expected name or string after from")
+        self.expect(TokenType.IMPORT, "Expected 'import' after module name")
         items = []
         while True:
-            t = self.expect(TokenType.NAME, "Ожидается имя импорта")
+            t = self.expect(TokenType.NAME, "Expected import name")
             items.append(t.value if t else None)
             if self.current_token() and self.current_token().type == TokenType.COMMA:
                 self.advance()
@@ -201,8 +201,8 @@ class Parser:
         if self.current_token() and self.current_token().type == TokenType.CONST:
             is_const = True
             self.advance()
-        name = self.expect(TokenType.NAME, "Ожидается имя глобальной переменной").value
-        self.expect(TokenType.COLON, "Ожидается ':' после имени глобальной переменной")
+        name = self.expect(TokenType.NAME, "Expected global variable name").value
+        self.expect(TokenType.COLON, "Expected ':' after global variable name")
         var_type = self.parse_type()
         value = None
         if self.current_token() and self.current_token().type == TokenType.ASSIGN:
@@ -273,10 +273,10 @@ class Parser:
         if self.current_token() and self.current_token().type == TokenType.EXTERN:
             is_extern = True
             self.advance()
-        self.expect(TokenType.DEF, "Ожидается 'def'")
-        name = self.expect(TokenType.NAME, "Ожидается имя функции").value
+        self.expect(TokenType.DEF, "Expected 'def'")
+        name = self.expect(TokenType.NAME, "Expected function name").value
 
-        self.expect(TokenType.LPAREN, "Ожидается '('")
+        self.expect(TokenType.LPAREN, "Expected '('")
         params: list[tuple[str, Any]] = []
         is_vararg = False
         if self.current_token() and self.current_token().type != TokenType.RPAREN:
@@ -285,15 +285,15 @@ class Parser:
                     is_vararg = True
                     self.advance()
                     break
-                pname = self.expect(TokenType.NAME, "Ожидается имя параметра").value
-                self.expect(TokenType.COLON, "Ожидается ':' после имени параметра")
+                pname = self.expect(TokenType.NAME, "Expected parameter name").value
+                self.expect(TokenType.COLON, "Expected ':' after parameter name")
                 ptype = self.parse_type()
                 params.append((pname, ptype))
                 if self.current_token() and self.current_token().type == TokenType.COMMA:
                     self.advance()
                     continue
                 break
-        self.expect(TokenType.RPAREN, "Ожидается ')'")
+        self.expect(TokenType.RPAREN, "Expected ')'")
 
         return_type = None
         if self.current_token() and self.current_token().type == TokenType.ARROW:
@@ -305,7 +305,7 @@ class Parser:
             fd = FunctionDef(name, params, return_type, [], is_extern=True, decorators=decorators, is_vararg=is_vararg)
             return fd
 
-        self.expect(TokenType.COLON, "Ожидается ':' после сигнатуры функции")
+        self.expect(TokenType.COLON, "Expected ':' after function signature")
         self.skip_newlines()
         body: list[Any] = []
         if self.current_token() and self.current_token().type == TokenType.INDENT:
@@ -327,21 +327,21 @@ class Parser:
         return FunctionDef(name, params, return_type, body, is_extern=False, decorators=decorators, is_vararg=is_vararg)
 
     def parse_struct_def(self, decorators: list[Decorator] | None = None) -> StructDef:
-        self.expect(TokenType.STRUCT, "Ожидается 'struct'")
-        name = self.expect(TokenType.NAME, "Ожидается имя структуры").value
-        self.expect(TokenType.COLON, "Ожидается ':' после имени структуры")
+        self.expect(TokenType.STRUCT, "Expected 'struct'")
+        name = self.expect(TokenType.NAME, "Expected struct name").value
+        self.expect(TokenType.COLON, "Expected ':' after struct name")
         self.skip_newlines()
         if self.current_token() and self.current_token().type == TokenType.INDENT:
             self.advance()
         else:
-            raise SyntaxError("Ожидается отступ после структуры ':'")
+            raise SyntaxError("Expected indent after struct ':'")
         fields: list[tuple[str, Any]] = []
         while self.current_token() and self.current_token().type != TokenType.DEDENT:
             self.skip_newlines()
             if not self.current_token() or self.current_token().type == TokenType.DEDENT:
                 break
-            fname = self.expect(TokenType.NAME, "Ожидается имя поля").value
-            self.expect(TokenType.COLON, "Ожидается ':' после имени поля")
+            fname = self.expect(TokenType.NAME, "Expected field name").value
+            self.expect(TokenType.COLON, "Expected ':' after field name")
             ftype = self.parse_type()
             fields.append((fname, ftype))
         if self.current_token() and self.current_token().type == TokenType.DEDENT:
@@ -350,20 +350,20 @@ class Parser:
         return s
 
     def parse_enum_def(self) -> EnumDef:
-        self.expect(TokenType.ENUM, "Ожидается 'enum'")
-        name = self.expect(TokenType.NAME, "Ожидается имя перечисления").value
-        self.expect(TokenType.COLON, "Ожидается ':' после имени перечисления")
+        self.expect(TokenType.ENUM, "Expected 'enum'")
+        name = self.expect(TokenType.NAME, "Expected enum name").value
+        self.expect(TokenType.COLON, "Expected ':' after enum name")
         self.skip_newlines()
         if self.current_token() and self.current_token().type == TokenType.INDENT:
             self.advance()
         else:
-            raise SyntaxError("Ожидается отступ после перечисления ':'")
+            raise SyntaxError("Expected indent after enum ':'")
         members: list[tuple[str, Any | None]] = []
         while self.current_token() and self.current_token().type != TokenType.DEDENT:
             self.skip_newlines()
             if not self.current_token() or self.current_token().type == TokenType.DEDENT:
                 break
-            mname = self.expect(TokenType.NAME, "Ожидается имя члена перечисления").value
+            mname = self.expect(TokenType.NAME, "Expected enum member name").value
             mval = None
             if self.current_token() and self.current_token().type == TokenType.ASSIGN:
                 self.advance()
@@ -374,7 +374,7 @@ class Parser:
         return EnumDef(name, members)
 
     def parse_comptime(self) -> ComptimeBlock:
-        self.expect(TokenType.COMPTIME, "Ожидается 'comptime'")
+        self.expect(TokenType.COMPTIME, "Expected 'comptime'")
         self.skip_newlines()
         code_parts: list[str] = []
         if self.current_token() and self.current_token().type == TokenType.INDENT:
@@ -388,7 +388,7 @@ class Parser:
                 self.advance()
             if self.current_token() and self.current_token().type == TokenType.DEDENT:
                 self.advance()
-        self.debugger.log_warning("Наткнулся на @comptime блок; выполнение будет изолировано (ненадежно)")
+        self.debugger.log_warning("Encountered @comptime block; execution will be sandboxed (unreliable)")
         return ComptimeBlock(''.join(code_parts))
 
     def parse_statement(self):
@@ -398,9 +398,9 @@ class Parser:
 
         if token.type == TokenType.ASM:
             self.advance()
-            self.expect(TokenType.LPAREN, "Ожидался '(' после asm")
-            s = self.expect(TokenType.STRING, "Ожидается asm string").value
-            self.expect(TokenType.RPAREN, "Ожидается ')'")
+            self.expect(TokenType.LPAREN, "Expected '(' after asm")
+            s = self.expect(TokenType.STRING, "Expected asm string").value
+            self.expect(TokenType.RPAREN, "Expected ')'")
             return InlineAsm(s)
 
         if token.type == TokenType.RETURN:
@@ -425,8 +425,8 @@ class Parser:
 
         if token.type == TokenType.LET:
             self.advance()
-            name = self.expect(TokenType.NAME, "Ожидается имя переменной после let").value
-            self.expect(TokenType.ASSIGN, "Ожидается '=' в let")
+            name = self.expect(TokenType.NAME, "Expected variable name after let").value
+            self.expect(TokenType.ASSIGN, "Expected '=' in let")
             val = self.parse_expression()
             return Assign(name, val)
 
@@ -437,7 +437,7 @@ class Parser:
             if kind == 'assign':
                 left = self.parse_atom_or_access_simple()
                 if not self.current_token():
-                    raise SyntaxError('Неожиданный EOF после имени переменной')
+                    raise SyntaxError('Unexpected EOF after variable name')
                 if self.current_token().type in (TokenType.ASSIGN, TokenType.PLUS_ASSIGN, TokenType.MINUS_ASSIGN):
                     op = self.current_token().type
                     self.advance()
@@ -471,7 +471,7 @@ class Parser:
         return expr
 
     def parse_return(self) -> Return:
-        self.expect(TokenType.RETURN, "Ожидается 'return'")
+        self.expect(TokenType.RETURN, "Expected 'return'")
         if self.current_token() and self.current_token().type not in (TokenType.NEWLINE, TokenType.DEDENT, TokenType.EOF):
             v = self.parse_expression()
         else:
@@ -479,8 +479,8 @@ class Parser:
         return Return(v)
 
     def parse_var_decl(self) -> Assign:
-        name = self.expect(TokenType.NAME, "Ожидается имя переменной").value
-        self.expect(TokenType.COLON, "Ожидается ':'")
+        name = self.expect(TokenType.NAME, "Expected variable name").value
+        self.expect(TokenType.COLON, "Expected ':'")
         t = self.parse_type()
         val = None
         if self.current_token() and self.current_token().type == TokenType.ASSIGN:
@@ -492,7 +492,7 @@ class Parser:
     def parse_atom_or_access_simple(self):
         token = self.current_token()
         if not token or token.type != TokenType.NAME:
-            raise SyntaxError("Ожидается имя")
+            raise SyntaxError("Expected name")
         name = token.value
         self.advance()
         if self.current_token() and self.current_token().type == TokenType.LPAREN:
@@ -502,12 +502,12 @@ class Parser:
         while self.current_token() and self.current_token().type in (TokenType.DOT, TokenType.LBRACKET):
             if self.current_token().type == TokenType.DOT:
                 self.advance()
-                field = self.expect(TokenType.NAME, "Ожидается имя поля").value
+                field = self.expect(TokenType.NAME, "Expected field name").value
                 expr = FieldAccess(expr, field)
             else:
                 self.advance()
                 idx = self.parse_expression()
-                self.expect(TokenType.RBRACKET, "Ожидается ']'" )
+                self.expect(TokenType.RBRACKET, "Expected ']'" )
                 expr = ArrayAccess(expr, idx)
         if self.current_token() and self.current_token().type == TokenType.LPAREN:
             expr = self.parse_call(expr)
@@ -517,44 +517,44 @@ class Parser:
         return self.parse_atom_or_access_simple()
 
     def parse_if_stmt(self) -> IfStmt:
-        self.expect(TokenType.IF, "Ожидается 'if'")
+        self.expect(TokenType.IF, "Expected 'if'")
         cond = self.parse_expression()
-        self.expect(TokenType.COLON, "Ожидается ':' после условия if")
+        self.expect(TokenType.COLON, "Expected ':' after if condition")
         self.skip_newlines()
-        self.expect(TokenType.INDENT, "Ожидается отступ для тела if")
+        self.expect(TokenType.INDENT, "Expected indent for if body")
         then: list[Any] = []
         while self.current_token() and self.current_token().type != TokenType.DEDENT:
             then.append(self.parse_statement())
             self.skip_newlines()
-        self.expect(TokenType.DEDENT, "Ожидается отступ после тела if")
+        self.expect(TokenType.DEDENT, "Expected dedent after if body")
         else_body = None
         if self.current_token() and self.current_token().type == TokenType.ELSE:
             self.advance()
-            self.expect(TokenType.COLON, "Ожидается ':' после else")
+            self.expect(TokenType.COLON, "Expected ':' after else")
             self.skip_newlines()
-            self.expect(TokenType.INDENT, "Ожидается отступ для тела else")
+            self.expect(TokenType.INDENT, "Expected indent for else body")
             else_body = []
             while self.current_token() and self.current_token().type != TokenType.DEDENT:
                 else_body.append(self.parse_statement())
                 self.skip_newlines()
-            self.expect(TokenType.DEDENT, "Ожидается отступ после тела else")
+            self.expect(TokenType.DEDENT, "Expected dedent after else body")
         return IfStmt(cond, then, else_body)
 
     def parse_while_stmt(self) -> WhileLoop:
-        self.expect(TokenType.WHILE, "Ожидается 'while'")
+        self.expect(TokenType.WHILE, "Expected 'while'")
         cond = self.parse_expression()
-        self.expect(TokenType.COLON, "Ожидается ':' после while")
+        self.expect(TokenType.COLON, "Expected ':' after while")
         self.skip_newlines()
-        self.expect(TokenType.INDENT, "Ожидается отступ для тела while")
+        self.expect(TokenType.INDENT, "Expected indent for while body")
         body: list[Any] = []
         while self.current_token() and self.current_token().type != TokenType.DEDENT:
             body.append(self.parse_statement())
             self.skip_newlines()
-        self.expect(TokenType.DEDENT, "Ожидается отступ после тела while")
+        self.expect(TokenType.DEDENT, "Expected dedent after while body")
         return WhileLoop(cond, body)
 
     def parse_for_stmt(self) -> ForLoop:
-        self.expect(TokenType.FOR, "Ожидается 'for'")
+        self.expect(TokenType.FOR, "Expected 'for'")
         if self.current_token() and self.current_token().type == TokenType.LPAREN:
             self.advance()
             init = None
@@ -577,11 +577,11 @@ class Parser:
                     except Exception:
                         self.pos = saved
                         init = self.parse_statement()
-            self.expect(TokenType.SEMICOLON, "Ожидается ';' в заголовке for")
+            self.expect(TokenType.SEMICOLON, "Expected ';' in for header")
             cond = None
             if self.current_token() and self.current_token().type != TokenType.SEMICOLON:
                 cond = self.parse_expression()
-            self.expect(TokenType.SEMICOLON, "Ожидается вторая ';' в заголовке for")
+            self.expect(TokenType.SEMICOLON, "Expected second ';' in for header")
             post = None
             if self.current_token() and self.current_token().type != TokenType.RPAREN:
                 saved = self.pos
@@ -599,45 +599,45 @@ class Parser:
                 except Exception:
                     self.pos = saved
                     post = self.parse_statement()
-            self.expect(TokenType.RPAREN, "Ожидается ')' после заголовка for")
-            self.expect(TokenType.COLON, "Ожидается ':' после заголовка for")
+            self.expect(TokenType.RPAREN, "Expected ')' after for header")
+            self.expect(TokenType.COLON, "Expected ':' after for header")
             self.skip_newlines()
-            self.expect(TokenType.INDENT, "Ожидается отступ для тела for")
+            self.expect(TokenType.INDENT, "Expected indent for for body")
             body: list[Any] = []
             while self.current_token() and self.current_token().type != TokenType.DEDENT:
                 body.append(self.parse_statement())
                 self.skip_newlines()
-            self.expect(TokenType.DEDENT, "Ожидается отступ после тела for")
+            self.expect(TokenType.DEDENT, "Expected dedent after for body")
             return ForLoop(None, None, init, cond, post, body)
 
         var_name = None
         if self.current_token() and self.current_token().type == TokenType.NAME:
             var_name = self.current_token().value
             self.advance()
-        self.expect(TokenType.IN, "Ожидается 'in' в операторе for")
+        self.expect(TokenType.IN, "Expected 'in' in for statement")
         if self.current_token() and self.current_token().type == TokenType.NUMBER and self.peek_token() and self.peek_token().type == TokenType.RANGE:
             start_tok = self.advance()
             self.advance()
-            end_tok = self.expect(TokenType.NUMBER, "Ожидается конечное число в диапазоне")
+            end_tok = self.expect(TokenType.NUMBER, "Expected end number in range")
             iter_expr = Call('range', [Literal(int(start_tok.value), 'int'), Literal(int(end_tok.value), 'int')])
         else:
             iter_expr = self.parse_expression()
-        self.expect(TokenType.COLON, " ':' after for header")
+        self.expect(TokenType.COLON, "Expected ':' after for header")
         self.skip_newlines()
-        self.expect(TokenType.INDENT, "Ожидаеться отступ для тела for")
+        self.expect(TokenType.INDENT, "Expected indent for for body")
         body: list[Any] = []
         while self.current_token() and self.current_token().type != TokenType.DEDENT:
             body.append(self.parse_statement())
             self.skip_newlines()
-        self.expect(TokenType.DEDENT, "Ожидается отступ после тела for")
+        self.expect(TokenType.DEDENT, "Expected dedent after for body")
         return ForLoop(var_name, iter_expr, None, None, None, body)
 
     def parse_match_stmt(self) -> MatchStmt:
-        self.expect(TokenType.MATCH, "Ожидается 'match'")
+        self.expect(TokenType.MATCH, "Expected 'match'")
         expr = self.parse_expression()
-        self.expect(TokenType.COLON, "Ожидается ':' после выражения match")
+        self.expect(TokenType.COLON, "Expected ':' after match expression")
         self.skip_newlines()
-        self.expect(TokenType.INDENT, "Ожидается отступ для тела match")
+        self.expect(TokenType.INDENT, "Expected indent for match body")
         cases: list[Case] = []
         while self.current_token() and self.current_token().type != TokenType.DEDENT:
             if self.current_token().type == TokenType.CASE:
@@ -649,30 +649,30 @@ class Parser:
                         self.advance()
                         continue
                     break
-                self.expect(TokenType.COLON, "Ожидается ':' после значений case")
+                self.expect(TokenType.COLON, "Expected ':' after case values")
                 self.skip_newlines()
-                self.expect(TokenType.INDENT, "Ожидается отступ для тела case")
+                self.expect(TokenType.INDENT, "Expected indent for case body")
                 body: list[Any] = []
                 while self.current_token() and self.current_token().type != TokenType.DEDENT:
                     body.append(self.parse_statement())
                     self.skip_newlines()
-                self.expect(TokenType.DEDENT, "Ожидается отступ после тела case")
+                self.expect(TokenType.DEDENT, "Expected dedent after case body")
                 cases.append(Case(vals, body))
             elif self.current_token().type == TokenType.DEFAULT:
                 self.advance()
-                self.expect(TokenType.COLON, "Ожидается ':' после default")
+                self.expect(TokenType.COLON, "Expected ':' after default")
                 self.skip_newlines()
-                self.expect(TokenType.INDENT, "Ожидается отступ для тела default")
+                self.expect(TokenType.INDENT, "Expected indent for default body")
                 body: list[Any] = []
                 while self.current_token() and self.current_token().type != TokenType.DEDENT:
                     body.append(self.parse_statement())
                     self.skip_newlines()
-                self.expect(TokenType.DEDENT, "Ожидается отступ после тела default")
+                self.expect(TokenType.DEDENT, "Expected dedent after default body")
                 cases.append(Case(None, body))
             else:
-                raise SyntaxError(f"Непредвиденный токен в теле match: {self.current_token().type} на линии {self.current_token().line}")
+                raise SyntaxError(f"Unexpected token in match body: {self.current_token().type} at line {self.current_token().line}")
                 self.advance()
-        self.expect(TokenType.DEDENT, "Ожидается отступ после тела match")
+        self.expect(TokenType.DEDENT, "Expected dedent after match body")
         return MatchStmt(expr, cases)
 
     def parse_expression(self):
@@ -764,16 +764,16 @@ class Parser:
             if self.current_token() and self.current_token().type == TokenType.LPAREN:
                 self.advance()
                 t = self.parse_type()
-                self.expect(TokenType.RPAREN, "Ожидается ')' после sizeof type")
+                self.expect(TokenType.RPAREN, "Expected ')' after sizeof type")
                 return SizeOf(t)
             else:
-                self.debugger.log_warning("Ожидается '(' после sizeof")
+                self.debugger.log_warning("Expected '(' after sizeof")
         return self.parse_atom()
 
     def parse_atom(self):
         token = self.current_token()
         if not token:
-            raise SyntaxError("Неожиданный конец файла в выражении")
+            raise SyntaxError("Unexpected end of file in expression")
 
         if token.type == TokenType.STRING:
             self.advance()
@@ -819,7 +819,7 @@ class Parser:
         elif token.type == TokenType.LPAREN:
             self.advance()
             expr = self.parse_expression()
-            self.expect(TokenType.RPAREN, "Ожидается ')'")
+            self.expect(TokenType.RPAREN, "Expected ')'")
 
         elif token.type == TokenType.LBRACKET or token.type == TokenType.LBRACE:
             is_struct_init = (token.type == TokenType.LBRACE)
@@ -833,9 +833,9 @@ class Parser:
                         self.advance(); continue
                     break
             if end_tok == TokenType.RBRACKET:
-                self.expect(TokenType.RBRACKET, "Ожидается ']' в литерале массива")
+                self.expect(TokenType.RBRACKET, "Expected ']' in array literal")
             else:
-                self.expect(TokenType.RBRACE, "Ожидается '}' в инициализаторе структуры")
+                self.expect(TokenType.RBRACE, "Expected '}' in struct initializer")
 
             arr = ArrayLiteral(elems)
             if is_struct_init:
@@ -848,13 +848,13 @@ class Parser:
         while self.current_token() and self.current_token().type in (TokenType.DOT, TokenType.LBRACKET, TokenType.AS):
             if self.current_token().type == TokenType.DOT:
                 self.advance()
-                fld = self.expect(TokenType.NAME, "Ожидается имя поля").value
+                fld = self.expect(TokenType.NAME, "Expected field name").value
                 expr = FieldAccess(expr, fld)
 
             elif self.current_token().type == TokenType.LBRACKET:
                 self.advance()
                 idx = self.parse_expression()
-                self.expect(TokenType.RBRACKET, "Ожидается ']' в индексе")
+                self.expect(TokenType.RBRACKET, "Expected ']' in index")
                 expr = ArrayAccess(expr, idx)
 
             elif self.current_token().type == TokenType.AS:
@@ -868,7 +868,7 @@ class Parser:
         return expr
 
     def parse_call(self, func_name: Any, type_args: list[Any] | None = None) -> Call:
-        self.expect(TokenType.LPAREN, "Ожидается '(' после имени вызова")
+        self.expect(TokenType.LPAREN, "Expected '(' after call name")
         args: list[Any] = []
         if self.current_token() and self.current_token().type != TokenType.RPAREN:
             while True:
@@ -876,7 +876,7 @@ class Parser:
                 if self.current_token() and self.current_token().type == TokenType.COMMA:
                     self.advance(); continue
                 break
-        self.expect(TokenType.RPAREN, "Ожидается ')' после аргументов вызова")
+        self.expect(TokenType.RPAREN, "Expected ')' after call arguments")
         return Call(func_name, args, type_args)
 
 def parse(tokens: List[Token]) -> Program:

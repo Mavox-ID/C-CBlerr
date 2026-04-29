@@ -5,7 +5,7 @@ from pathlib import Path
 
 def main():
     current_dir = Path(__file__).parent.resolve()
-    target_script = current_dir / "build_standalone.py" #chito meowly fazber? Idk 
+    target_script = current_dir / "cblerr.py" # CBlerr Compilator file for code start (TODO)
 
     command = [sys.executable, str(target_script)] + sys.argv[1:]
 
@@ -13,10 +13,10 @@ def main():
         result = subprocess.run(command, check=False)
         sys.exit(result.returncode)
     except KeyboardInterrupt:
-        print("\nСборка прервана пользователем.")
+        print("\nThe build was aborted by the user.")
         sys.exit(130)
     except Exception as e:
-        print(f"Не удалось запустить компилятор: {e} (возможно, он не установлен или не найден в папке со скриптом)")
+        print(f"Failed to run compiler: {e}.")
         sys.exit(1)
 
 if __name__ == "__main__":

@@ -86,37 +86,37 @@ class TypeChecker:
             if getattr(g, 'value', None) is not None:
                 from core.flux_ast import StringLiteral
                 if not isinstance(g.value, (Literal, StringLiteral)):
-                    self._error(f"Глобальная переменная '{g.name}' Должна быть инициализирована константным литералом (строкой, числом или булевым значением) сложная инициализация глобальных переменных должна быть выполнена в функции main()")
+                    self._error(f"Global variable '{g.name}' must be initialized with a constant literal (string, number, or boolean); complex initialization of global variables must be done in main()")
 
         found_non_extern = False
         for f in program.functions:
             is_extern = getattr(f, 'is_extern', False)
             if is_extern and found_non_extern:
-                self._error("extern вызовы должны быть объявлены в начале файла")
+                self._error("extern declarations must be placed at the top of the file")
             if not is_extern:
                 found_non_extern = True
 
         name_to_index = {fn.name: idx for idx, fn in enumerate(program.functions)}
         for idx, fn in enumerate(program.functions):
             if fn.name == 'main' and idx != len(program.functions) - 1:
-                self._error("main() ДОЛЖНА ВСЕГДА быть последней функцией в файле")
+                self._error("main() MUST ALWAYS be the last function in the file")
 
         for idx, fn in enumerate(program.functions):
             calls = self._collect_calls(fn.body)
             for callee in calls:
                 if callee in name_to_index and name_to_index[callee] > idx:
-                    self._error(f"Функция '{callee}' должна быть определена до того, как она будет вызвана функцией '{fn.name}' (Правило Top-Down)")
+                    self._error(f"Function '{callee}' must be defined before it is called by '{fn.name}' (Top-Down Rule)")
 
         for f in program.functions:
             if f.name in self.reserved_functions and not getattr(f, 'is_extern', False):
-                self._error(f"Переопределение зарезервированной функции '{f.name}' не допускается; объявите ее как extern, чтобы использовать реализацию во время выполнения.")
+                self._error(f"Redefinition of reserved function '{f.name}' is not allowed; declare it as extern to use the runtime implementation.")
 
         for f in program.functions:
             if f.return_type is not None:
                 ret_str = _type_to_str(f.return_type)
                 if ret_str.startswith('i'):
                     if not f.body or not isinstance(f.body[-1], Return):
-                        self._error(f"Функция '{f.name}', объявленная с типом возвращаемого значения '{ret_str}', должна заканчиваться явным оператором return (<expr>")
+                        self._error(f"Function '{f.name}', declared with return type '{ret_str}', must end with an explicit return statement (<expr>")
 
         for f in program.functions:
             self._check_function(f)
@@ -149,7 +149,7 @@ class TypeChecker:
                 if declared:
                     declared_str = _type_to_str(declared)
                     if declared_str != val_t:
-                        self._error(f"Несоответствие типов в присваивании '{stmt.target}': {declared_str} != {val_t}")
+                        self._error(f"Type mismatch in assignment '{stmt.target}': {declared_str} != {val_t}")
                     if isinstance(stmt.target, str):
                         symbols[stmt.target] = declared_str
                 else:
@@ -181,7 +181,7 @@ class TypeChecker:
                     if isinstance(stmt.value, AddressOf):
                         inner = stmt.value.expr
                         if isinstance(inner, ArrayLiteral):
-                            self._error("Возвращать адрес локального литерала массива запрещено; выделите память в куче с помощью функции malloc и верните этот указатель.")
+                            self._error("Returning the address of a local array literal is forbidden; allocate on the heap using malloc and return that pointer.")
                         if isinstance(inner, Variable):
                             vname = inner.name
                             if origins.get(vname) != 'heap':
@@ -191,11 +191,11 @@ class TypeChecker:
                             if isinstance(base, Variable):
                                 bname = base.name
                                 if origins.get(bname) != 'heap':
-                                    self._error("Возврат адреса поля локальной структуры запрещен; для возврата указателя на ее поле следует выделить структуру в куче.")
+                                    self._error("Returning the address of a local struct field is forbidden; to return a pointer to its field, allocate the struct on the heap.")
                     if isinstance(stmt.value, Variable):
                         v = stmt.value.name
                         if origins.get(v) in ('stack_ptr', 'stack_array'):
-                            self._error("Возвращать указатель на локально выделенный массив/переменную запрещено; выделите память в куче и верните этот указатель.")
+                            self._error("Returning a pointer to a locally allocated array/variable is forbidden; allocate on the heap and return that pointer.")
 
                     vtype = self._check_expression(stmt.value, symbols, origins)
                 else:
@@ -205,24 +205,24 @@ class TypeChecker:
                     expected = self.current_return_type
                     if expected == 'void':
                         if vtype != 'void':
-                            self._error(f"Функция объявлена как void, но return содержит значение типа {vtype}")
+                            self._error(f"Function declared as void but return contains a value of type {vtype}")
                     else:
                         if vtype == 'void':
-                            self._error(f"Функция объявлена как {expected}, но return без значения")
+                            self._error(f"Function declared as {expected}, but return has no value")
                         else:
                             if isinstance(expected, str) and isinstance(vtype, str):
                                 if expected.startswith('i') and vtype.startswith('i'):
                                     pass
                                 elif expected != vtype:
-                                    self._error(f"Несоответствие типов возвращаемого значения: ожидается {expected}, получено {vtype}")
+                                    self._error(f"Return type mismatch: expected {expected}, got {vtype}")
                             else:
                                 if expected != vtype:
-                                    self._error(f"Несоответствие типов возвращаемого значения: ожидается {expected}, получено {vtype}")
+                                    self._error(f"Return type mismatch: expected {expected}, got {vtype}")
 
             case IfStmt():
                 cond_t = self._check_expression(stmt.condition, symbols, origins)
                 if cond_t not in ('int', 'bool'):
-                    self._error(f"Условие if должно быть boolean/int, получено {cond_t}")
+                    self._error(f"If condition must be boolean/int, got {cond_t}")
                 for s in stmt.then_body:
                     self._check_statement(s, symbols, origins)
                 if stmt.else_body:
@@ -232,7 +232,7 @@ class TypeChecker:
             case WhileLoop():
                 cond_t = self._check_expression(stmt.condition, symbols, origins)
                 if cond_t not in ('int', 'bool'):
-                    self._error(f"Условие while должно быть boolean/int, получено {cond_t}")
+                    self._error(f"While condition must be boolean/int, got {cond_t}")
                 for s in stmt.body:
                     self._check_statement(s, symbols, origins)
 
@@ -251,7 +251,7 @@ class TypeChecker:
                 if stmt.condition:
                     ct = self._check_expression(stmt.condition, symbols, origins)
                     if ct not in ('int', 'bool'):
-                        self._error(f"Условие for должно быть boolean/int, получено {ct}")
+                        self._error(f"For condition must be boolean/int, got {ct}")
                 if stmt.post:
                     if isinstance(stmt.post, Assign):
                         self._check_statement(stmt.post, symbols, origins)
@@ -283,7 +283,7 @@ class TypeChecker:
                         for v in c.values:
                             vt = self._check_expression(v, symbols, origins)
                             if vt != e_t:
-                                self._error(f"Тип значения регистра совпадения {vt} отличается от типа выражения совпадения. {e_t}")
+                                self._error(f"Type of match case value {vt} differs from the match expression type. {e_t}")
                     for s in c.body:
                         self._check_statement(s, symbols, origins)
 
@@ -292,7 +292,7 @@ class TypeChecker:
 
     def _check_expression(self, expr: Any, symbols: Dict[str, str], origins: Dict[str, str] = None) -> str:
         if expr is None:
-            self._error("Недопустимый тип выражения")
+            self._error("Invalid expression type")
 
         if isinstance(expr, Literal):
             expr.resolved_type = expr.type
@@ -313,7 +313,7 @@ class TypeChecker:
                 fn_str = f"fn({params_str})->{ret}"
                 expr.resolved_type = fn_str
                 return expr.resolved_type
-            self._error(f"Неопределенная переменная '{expr.name}'")
+            self._error(f"Undefined variable '{expr.name}'")
 
         if isinstance(expr, FieldAccess):
             obj_t = self._check_expression(expr.obj, symbols, origins)
@@ -333,10 +333,10 @@ class TypeChecker:
                 struct_name = obj_t
 
             if not struct_name or struct_name not in self.struct_fields:
-                self._error(f"Доступ к полю на не-struct типе: {obj_t}")
+                self._error(f"Field access on non-struct type: {obj_t}")
 
             if expr.field not in self.struct_fields[struct_name]:
-                self._error(f"Поле '{expr.field}' не найдено в структуре '{struct_name}'")
+                self._error(f"Field '{expr.field}' not found in struct '{struct_name}'")
 
             ftype = _type_to_str(self.struct_fields[struct_name][expr.field])
             expr.resolved_type = ftype
@@ -364,7 +364,7 @@ class TypeChecker:
 
             if isinstance(expr.func_name, str):
                 if expr.func_name not in self.functions:
-                    self._error(f"Обращение к неизвестной функции '{expr.func_name}'")
+                    self._error(f"Call to unknown function '{expr.func_name}'")
                 sig = self.functions[expr.func_name]
                 args = expr.args or []
                 for i, a in enumerate(args):
@@ -378,10 +378,10 @@ class TypeChecker:
                             if isinstance(a, CastExpr) and isinstance(a.expr, FieldAccess) and a.expr.field == 'data':
                                 ok = True
                             if not ok:
-                                self._error(f"Передача `str` непосредственно в функцию '{expr.func_name}'; передайте `<your_string>.data как *void`, если ожидается указатель.")
+                                self._error(f"Passing `str` directly to function '{expr.func_name}'; pass `<your_string>.data as *void` if a pointer is expected.")
                         if at != expected:
                             if not (isinstance(at, str) and at.startswith('i') and isinstance(expected, str) and expected.startswith('i')):
-                                self._error(f"Несоответствие типов аргументов при вызове функции '{expr.func_name}': {at} != {expected}")
+                                self._error(f"Argument type mismatch in call to function '{expr.func_name}': {at} != {expected}")
                 expr.resolved_type = sig['return'] or 'void'
                 return expr.resolved_type
 
@@ -460,7 +460,7 @@ class TypeChecker:
                 params, ret = _parse_fn_sig(sig_str)
                 args = expr.args or []
                 if len(args) != len(params):
-                    self._error(f"Несоответствие числа аргументов при вызове через указатель: {len(args)} != {len(params)}")
+                    self._error(f"Argument count mismatch in pointer call: {len(args)} != {len(params)}")
                 for i, a in enumerate(args):
                     at = self._check_expression(a, symbols, origins)
                     expected = params[i]
@@ -471,23 +471,23 @@ class TypeChecker:
                         if isinstance(a, CastExpr) and isinstance(a.expr, FieldAccess) and a.expr.field == 'data':
                             ok = True
                         if not ok:
-                            self._error(f"Передача `str` непосредственно в функцию-по-указателю; передайте `<your_string>.data как *void`, если ожидается указатель.")
+                            self._error(f"Passing `str` directly to a function pointer; pass `<your_string>.data as *void` if a pointer is expected.")
                     if at != expected:
                         if not (isinstance(at, str) and at.startswith('i') and isinstance(expected, str) and expected.startswith('i')):
-                            self._error(f"Несоответствие типов аргументов при вызове через указатель: {at} != {expected}")
+                            self._error(f"Argument type mismatch in pointer call: {at} != {expected}")
                 expr.resolved_type = ret or 'void'
                 return expr.resolved_type
 
-            self._error(f"Вызов на объекте не является указателем на функцию: {callee_t}")
+            self._error(f"Call on object is not a function pointer: {callee_t}")
 
         if isinstance(expr, ArrayLiteral):
             if not expr.elements:
-                self._error("Пустой литерал массива не поддерживается для вывода типов")
+                self._error("Empty array literal is not supported for type inference")
             elem_t = self._check_expression(expr.elements[0], symbols, origins)
             for e in expr.elements[1:]:
                 t = self._check_expression(e, symbols, origins)
                 if t != elem_t:
-                    self._error(f"Элементы литерала массива должны иметь одинаковый тип: {t} != {elem_t}")
+                    self._error(f"Array literal elements must have the same type: {t} != {elem_t}")
             expr.resolved_type = f"array<{elem_t}>"
             return expr.resolved_type
 
@@ -510,7 +510,7 @@ class TypeChecker:
                     expr.resolved_type = inner
                     return inner
             expr.resolved_type = 'void'
-            self._error("Недопустимый тип выражения")
+            self._error("Invalid expression type")
 
         if isinstance(expr, AddressOf):
             inner_t = self._check_expression(expr.expr, symbols, origins)
@@ -526,7 +526,7 @@ class TypeChecker:
             if expr.op == 'not':
                 lt = self._check_expression(expr.left, symbols, origins)
                 if lt not in ('int', 'bool'):
-                    self._error(f"Логический оператор 'not' требует boolean/int, получено {lt}")
+                    self._error(f"Logical operator 'not' requires boolean/int, got {lt}")
                 expr.resolved_type = 'bool'
                 return 'bool'
 
@@ -535,7 +535,7 @@ class TypeChecker:
             rt = self._check_expression(expr.right, symbols, origins)
             if lt != rt:
                 if not (lt.startswith('i') and rt.startswith('i')):
-                    self._error(f"Бинарный оператор несоответствия типов: {lt} {expr.op} {rt}")
+                    self._error(f"Binary operator type mismatch: {lt} {expr.op} {rt}")
             if expr.op == '+' and lt == 'str' and rt == 'str':
                 expr.resolved_type = 'str'
                 return 'str'
@@ -547,12 +547,12 @@ class TypeChecker:
                 return lt
             if expr.op in ('==', '!=', '<', '>', '<=', '>='):
                 if (isinstance(lt, str) and lt.startswith('f')) or (isinstance(rt, str) and rt.startswith('f')):
-                    self._error("Прямое сравнение float значений не поддерживается в текущем бэкенде; преобразуйте к int или используйте вспомогательную функцию")
+                    self._error("Direct float comparison is not supported in the current backend; convert to int or use a helper function")
                 expr.resolved_type = 'bool'
                 return 'bool'
             if expr.op in ('and', 'or'):
                 if lt not in ('int', 'bool') or rt not in ('int', 'bool'):
-                    self._error("Логические операторы 'and'/'or' должны работать с boolean/int значениями; не используйте их для проверки null. Используйте вложенные if-выражения вместо этого.")
+                    self._error("Logical operators 'and'/'or' must operate on boolean/int values; do not use them for null checks. Use nested if-expressions instead.")
                 expr.resolved_type = 'bool'
                 return 'bool'
 
@@ -565,4 +565,4 @@ class TypeChecker:
                 elif hasattr(v, '__dict__'):
                     self._check_expression(v, symbols, origins)
 
-        self._error(f"Невозможно определить тип выражения для узла: {type(expr).__name__}")
+        self._error(f"Cannot determine expression type for node: {type(expr).__name__}")

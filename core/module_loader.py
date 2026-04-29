@@ -19,7 +19,7 @@ def _resolve_module_path(module_name: str, base_dir: Path) -> Path:
         cand2 = candidate.with_suffix('.cbl')
         if cand2.exists():
             return cand2.resolve()
-    raise ImportError(f"Импортируемый файл не найден: {module_name} (из {base_dir})")
+    raise ImportError(f"Imported file not found: {module_name} (from {base_dir})")
 
 
 def inline_imports(program: Program, source_path: str | Path, cache: Dict[Path, Program] | None = None,
@@ -51,7 +51,7 @@ def inline_imports(program: Program, source_path: str | Path, cache: Dict[Path, 
             mod_path = _resolve_module_path(module_name, base_dir)
             if mod_path in stack:
                 path_chain = ' -> '.join(str(p) for p in stack + [mod_path])
-                raise ImportError(f"Обнаружен циклический импорт: {path_chain}")
+                raise ImportError(f"Circular import detected: {path_chain}")
 
             if mod_path not in cache:
                 src = Path(mod_path).read_text(encoding='utf-8')
@@ -67,19 +67,19 @@ def inline_imports(program: Program, source_path: str | Path, cache: Dict[Path, 
 
             for s in imported_prog.structs:
                 if s.name in structs_names or s.name in funcs_names or s.name in globals_names:
-                    raise ImportError(f"При импорте обнаруживается повторяющийся символ '{s.name}' из {mod_path}")
+                    raise ImportError(f"Duplicate symbol '{s.name}' from {mod_path}")
                 program.structs.append(s)
                 structs_names.add(s.name)
 
             for f in imported_prog.functions:
                 if f.name in funcs_names or f.name in structs_names or f.name in globals_names:
-                    raise ImportError(f"При импорте обнаруживается повторяющийся символ '{f.name}' из {mod_path}")
+                    raise ImportError(f"Duplicate symbol '{f.name}' from {mod_path}")
                 program.functions.append(f)
                 funcs_names.add(f.name)
 
             for g in imported_prog.global_vars:
                 if g.name in globals_names or g.name in funcs_names or g.name in structs_names:
-                    raise ImportError(f"При импорте обнаруживается повторяющийся символ '{g.name}' из {mod_path}")
+                    raise ImportError(f"Duplicate symbol '{g.name}' from {mod_path}")
                 program.global_vars.append(g)
                 globals_names.add(g.name)
 
@@ -90,7 +90,7 @@ def inline_imports(program: Program, source_path: str | Path, cache: Dict[Path, 
             mod_path = _resolve_module_path(module_name, base_dir)
             if mod_path in stack:
                 path_chain = ' -> '.join(str(p) for p in stack + [mod_path])
-                raise ImportError(f"Обнаружен циклический импорт: {path_chain}")
+                raise ImportError(f"Circular import detected: {path_chain}")
 
             if mod_path not in cache:
                 src = Path(mod_path).read_text(encoding='utf-8')
@@ -106,7 +106,7 @@ def inline_imports(program: Program, source_path: str | Path, cache: Dict[Path, 
                 for f in imported_prog.functions:
                     if f.name == item:
                         if item in funcs_names or item in structs_names or item in globals_names:
-                            raise ImportError(f"При импорте обнаруживается повторяющийся символ '{item}' из {mod_path}")
+                            raise ImportError(f"Duplicate symbol '{item}' from {mod_path}")
                         program.functions.append(f)
                         funcs_names.add(item)
                         found = True
@@ -116,7 +116,7 @@ def inline_imports(program: Program, source_path: str | Path, cache: Dict[Path, 
                 for s in imported_prog.structs:
                     if s.name == item:
                         if item in structs_names or item in funcs_names or item in globals_names:
-                            raise ImportError(f"При импорте обнаруживается повторяющийся символ '{item}' из {mod_path}")
+                            raise ImportError(f"Duplicate symbol '{item}' from {mod_path}")
                         program.structs.append(s)
                         structs_names.add(item)
                         found = True
@@ -126,13 +126,13 @@ def inline_imports(program: Program, source_path: str | Path, cache: Dict[Path, 
                 for g in imported_prog.global_vars:
                     if g.name == item:
                         if item in globals_names or item in funcs_names or item in structs_names:
-                            raise ImportError(f"При импорте обнаруживается повторяющийся символ '{item}' из {mod_path}")
+                            raise ImportError(f"Duplicate symbol '{item}' from {mod_path}")
                         program.global_vars.append(g)
                         globals_names.add(item)
                         found = True
                         break
                 if not found:
-                    raise ImportError(f"Элемент '{item}' не найден в модуле {mod_path}")
+                    raise ImportError(f"Item '{item}' not found in module {mod_path}")
 
         else:
             continue
