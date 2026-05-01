@@ -11,7 +11,6 @@ static inline char *_cbl_strdup(const char *s) {
 }
 #define strdup _cbl_strdup
 
-/* ── string builder ─────────────────────────────────────────────── */
 static void cg_ensure(CodeGen *cg, int extra) {
     if(cg->len+extra+1 >= cg->cap) {
         cg->cap = cg->cap ? cg->cap*2+extra : 65536+extra;
@@ -35,7 +34,6 @@ static void cg_linef(CodeGen *cg, const char *fmt, ...) {
     cg_line(cg, buf);
 }
 
-/* ── type mapping ───────────────────────────────────────────────── */
 static const char *ctype(const char *flux) {
     if(!flux||strcmp(flux,"void")==0) return "void";
     if(strcmp(flux,"int")==0||strcmp(flux,"i32")==0||strcmp(flux,"int32")==0) return "int32_t";
@@ -50,27 +48,22 @@ static const char *ctype(const char *flux) {
     if(strcmp(flux,"f64")==0||strcmp(flux,"double")==0) return "double";
     if(strcmp(flux,"bool")==0) return "bool";
     if(strcmp(flux,"str")==0) return "flux_string";
-    return NULL; /* signal: needs struct prefix */
+    return NULL;
 }
 
-/* Returns heap-allocated C type string – caller frees */
 static char *ctype_str(const char *flux) {
     if(!flux) return strdup("void");
-    /* pointer */
     if(flux[0]=='*') {
         char *inner=ctype_str(flux+1);
         char *r=malloc(strlen(inner)+2); r[0]=0; strcat(r,inner); strcat(r,"*");
         free(inner); return r;
     }
-    /* ptr<T> */
     if(strncmp(flux,"ptr<",4)==0) {
         char *inner=ctype_str(flux+4);
-        /* strip trailing > */
         size_t l=strlen(inner); if(l>0&&inner[l-1]=='>') inner[l-1]=0;
         char *r=malloc(strlen(inner)+2); strcpy(r,inner); strcat(r,"*");
         free(inner); return r;
     }
-    /* array<T> */
     if(strncmp(flux,"array<",6)==0) {
         char tmp[256]; strncpy(tmp,flux+6,sizeof(tmp)-1); tmp[sizeof(tmp)-1]=0;
         size_t l=strlen(tmp); if(l>0&&tmp[l-1]=='>') tmp[l-1]=0;
@@ -80,12 +73,10 @@ static char *ctype_str(const char *flux) {
     }
     const char *m=ctype(flux);
     if(m) return strdup(m);
-    /* struct */
     char buf[256]; snprintf(buf,sizeof(buf),"struct %s",flux);
     return strdup(buf);
 }
 
-/* escape string for C literal */
 static void escape_str(const char *s, char *out, int outmax) {
     int oi=0;
     for(;*s&&oi<outmax-4;s++) {
@@ -101,7 +92,6 @@ static void escape_str(const char *s, char *out, int outmax) {
     out[oi]=0;
 }
 
-/* ── expression codegen ─────────────────────────────────────────── */
 static char *gen_expr(CodeGen *cg, AstNode *n);
 
 static char *gen_print(CodeGen *cg, AstNode *n) {
@@ -113,7 +103,7 @@ static char *gen_print(CodeGen *cg, AstNode *n) {
             char esc[2048]; escape_str(a->sval,esc,sizeof(esc));
             strncat(fmt,esc,sizeof(fmt)-strlen(fmt)-1);
         } else {
-            strncat(fmt,"%d",sizeof(fmt)-strlen(fmt)-1); /* default int spec */
+            strncat(fmt,"%d",sizeof(fmt)-strlen(fmt)-1);
             char *ac=gen_expr(cg,a);
             if(has_args) strncat(args_part,", ",sizeof(args_part)-strlen(args_part)-1);
             strncat(args_part,ac,sizeof(args_part)-strlen(args_part)-1);
@@ -235,7 +225,6 @@ static char *gen_expr(CodeGen *cg, AstNode *n) {
     }
 }
 
-/* ── statement codegen ──────────────────────────────────────────── */
 static void gen_stmt(CodeGen *cg, AstNode *n);
 
 static void gen_stmt(CodeGen *cg, AstNode *n) {
@@ -252,7 +241,6 @@ static void gen_stmt(CodeGen *cg, AstNode *n) {
         AstNode *tgt=n->assign.target;
         char *val=gen_expr(cg,n->assign.value);
         if(n->assign.var_type) {
-            /* declaration */
             char *ct=ctype_str(n->assign.var_type);
             if(tgt&&tgt->kind==ND_VARIABLE)
                 cg_linef(cg,"%s %s = %s;",ct,tgt->sval?tgt->sval:"?",val);
@@ -288,7 +276,6 @@ static void gen_stmt(CodeGen *cg, AstNode *n) {
     }
     case ND_FOR: {
         if(n->forl.init||n->forl.cond||n->forl.post) {
-            /* C-style for */
             char init_buf[256]="", cond_buf[256]="1", post_buf[256]="";
             if(n->forl.init) {
                 AstNode *ini=n->forl.init;
@@ -304,7 +291,6 @@ static void gen_stmt(CodeGen *cg, AstNode *n) {
             if(n->forl.post) { char *pe=gen_expr(cg,n->forl.post); snprintf(post_buf,sizeof(post_buf),"%s",pe); free(pe); }
             cg_linef(cg,"for (%s; %s; %s) {",init_buf,cond_buf,post_buf);
         } else if(n->forl.iter_var) {
-            /* for-in with range() call */
             AstNode *ie=n->forl.iter_expr;
             if(ie&&ie->kind==ND_CALL&&ie->call.func&&ie->call.func->kind==ND_VARIABLE
                &&strcmp(ie->call.func->sval,"range")==0&&ie->call.args.len>=2) {
@@ -321,7 +307,7 @@ static void gen_stmt(CodeGen *cg, AstNode *n) {
                 free(arr);
             }
         } else {
-            cg_line(cg,"while(1) {"); /* fallback */
+            cg_line(cg,"while(1) {");
         }
         cg->indent++;
         for(int i=0;i<n->forl.body.len;i++) gen_stmt(cg,n->forl.body.data[i]);
@@ -365,7 +351,6 @@ static void gen_stmt(CodeGen *cg, AstNode *n) {
     }
 }
 
-/* ── function signature ─────────────────────────────────────────── */
 static void gen_func_sig(CodeGen *cg, FuncDef *f, char *out, int out_sz) {
     char *rt=ctype_str(f->return_type?f->return_type:"void");
     char params[2048]="";
@@ -381,7 +366,6 @@ static void gen_func_sig(CodeGen *cg, FuncDef *f, char *out, int out_sz) {
         else strncpy(params,"...",sizeof(params)-1);
     }
 
-    /* Windows __stdcall for extern non-CRT */
     const char *call_conv="";
 #ifdef _WIN32
     if(f->is_extern) {
@@ -400,11 +384,9 @@ static void gen_func_sig(CodeGen *cg, FuncDef *f, char *out, int out_sz) {
     free(rt);
 }
 
-/* ── main generate ──────────────────────────────────────────────── */
 char *codegen_generate(Program *prog) {
     CodeGen _cg={0}; CodeGen *cg=&_cg;
 
-    /* standard prelude */
     cg_line(cg,"typedef signed char int8_t;");
     cg_line(cg,"typedef short int16_t;");
     cg_line(cg,"typedef int int32_t;");
@@ -433,7 +415,6 @@ char *codegen_generate(Program *prog) {
     cg_line(cg,"}");
     cg_line(cg,"");
 
-    /* Windows-specific stubs */
     cg_line(cg,"#if defined(_WIN32)||defined(__WIN32__)");
     cg_line(cg,"extern void* __stdcall LoadLibraryA(const void*);");
     cg_line(cg,"extern void* __stdcall GetProcAddress(void*, const void*);");
@@ -444,7 +425,6 @@ char *codegen_generate(Program *prog) {
     cg_line(cg,"#endif");
     cg_line(cg,"");
 
-    /* common C externals */
     static const char *extern_decls[] = {
         "extern void* malloc(size_t);",
         "extern void* calloc(size_t, size_t);",
@@ -472,14 +452,12 @@ char *codegen_generate(Program *prog) {
     for(int i=0;extern_decls[i];i++) cg_line(cg,extern_decls[i]);
     cg_line(cg,"");
 
-    /* struct/enum forward declarations */
     for(int i=0;i<prog->structs.len;i++) {
         if(!prog->structs.data[i].is_enum)
             cg_linef(cg,"struct %s;",prog->structs.data[i].name);
     }
     cg_line(cg,"");
 
-    /* struct and enum definitions */
     for(int i=0;i<prog->structs.len;i++) {
         StructDef *s=&prog->structs.data[i];
         if(s->is_enum) {
@@ -506,7 +484,6 @@ char *codegen_generate(Program *prog) {
     }
     cg_line(cg,"");
 
-    /* global variables */
     static const char *skip_std[]={
         "malloc","calloc","realloc","free","memset","memcpy","memmove",
         "printf","sprintf","puts","putchar","scanf","exit","fopen",
@@ -518,13 +495,11 @@ char *codegen_generate(Program *prog) {
         char *ct=ctype_str(g->type?g->type:"int");
         if(g->value) {
             char *val=gen_expr(cg,g->value);
-            /* simple literals can be initialised inline */
             if(g->value->kind==ND_LITERAL_INT||g->value->kind==ND_LITERAL_FLOAT
                ||g->value->kind==ND_LITERAL_STR||g->value->kind==ND_LITERAL_BOOL) {
                 cg_linef(cg,"%s %s = %s;",ct,g->name,val);
             } else {
                 cg_linef(cg,"%s %s;",ct,g->name);
-                /* defer to init function */
                 if(cg->dyn_count>=cg->dyn_cap) {
                     cg->dyn_cap=cg->dyn_cap?cg->dyn_cap*2:16;
                     cg->dyn_names=realloc(cg->dyn_names,sizeof(char*)*(size_t)cg->dyn_cap);
@@ -542,7 +517,6 @@ char *codegen_generate(Program *prog) {
     }
     cg_line(cg,"");
 
-    /* extern function declarations */
     for(int i=0;i<prog->funcs.len;i++) {
         FuncDef *f=&prog->funcs.data[i];
         if(!f->is_extern) continue;
@@ -552,7 +526,6 @@ char *codegen_generate(Program *prog) {
         char sig[1024]; gen_func_sig(cg,f,sig,sizeof(sig));
         cg_linef(cg,"%s;",sig);
     }
-    /* forward declarations for non-extern */
     for(int i=0;i<prog->funcs.len;i++) {
         FuncDef *f=&prog->funcs.data[i];
         if(f->is_extern) continue;
@@ -561,7 +534,6 @@ char *codegen_generate(Program *prog) {
     }
     cg_line(cg,"");
 
-    /* function bodies */
     for(int i=0;i<prog->funcs.len;i++) {
         FuncDef *f=&prog->funcs.data[i];
         if(f->is_extern) continue;
@@ -569,7 +541,6 @@ char *codegen_generate(Program *prog) {
         cg_linef(cg,"%s {",sig);
         cg->indent++;
         for(int j=0;j<f->body.len;j++) gen_stmt(cg,f->body.data[j]);
-        /* implicit return 0 for int functions without explicit return */
         if(f->return_type&&strcmp(f->return_type,"void")!=0) {
             bool has_ret=false;
             if(f->body.len>0&&f->body.data[f->body.len-1]&&
@@ -581,7 +552,6 @@ char *codegen_generate(Program *prog) {
         cg_line(cg,"");
     }
 
-    /* global init function */
     cg_line(cg,"void CblerrInitGlobals(void) {");
     cg->indent++;
     for(int i=0;i<cg->dyn_count;i++)
@@ -589,13 +559,11 @@ char *codegen_generate(Program *prog) {
     cg->indent--;
     cg_line(cg,"}");
 
-    /* platform startup */
     cg_line(cg,"#if defined(_WIN32)||defined(__WIN32__)");
     cg_line(cg,"void CblerrStartup(void) { CblerrInitGlobals(); main(); ExitProcess(0); }");
     cg_line(cg,"#endif");
 
-    /* cleanup */
     for(int i=0;i<cg->dyn_count;i++){free(cg->dyn_names[i]);free(cg->dyn_vals[i]);}
     free(cg->dyn_names); free(cg->dyn_vals);
-    return cg->buf; /* caller frees */
+    return cg->buf;
 }
