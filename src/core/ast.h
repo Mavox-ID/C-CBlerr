@@ -3,12 +3,10 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-/* ── string helper ──────────────────────────────────────────────── */
 typedef struct { char *s; size_t len; } CblStr;
-CblStr cblstr(const char *s);            /* wraps a C-string */
-CblStr cblstr_dup(const char *s);        /* heap-allocates a copy  */
+CblStr cblstr(const char *s);
+CblStr cblstr_dup(const char *s);
 
-/* ── token types ────────────────────────────────────────────────── */
 typedef enum {
     TK_DEF, TK_RETURN, TK_ENDOFCODE, TK_IF, TK_ELSE, TK_EXTERN,
     TK_WHILE, TK_FOR, TK_BREAK, TK_CONTINUE, TK_STRUCT, TK_CONST,
@@ -32,11 +30,10 @@ typedef enum {
 
 typedef struct {
     TokKind  kind;
-    char    *val;   /* heap-allocated, may be NULL */
+    char    *val;
     int      line, col;
 } Token;
 
-/* ── dynamic list helpers ───────────────────────────────────────── */
 #define VEC(T) struct { T *data; int len, cap; }
 #define VEC_PUSH(v, item) do { \
     if ((v)->len >= (v)->cap) { \
@@ -47,17 +44,14 @@ typedef struct {
 } while(0)
 #define VEC_FREE(v) do { free((v)->data); (v)->data=NULL; (v)->len=(v)->cap=0; } while(0)
 
-/* ── type representation ────────────────────────────────────────── */
-/* Types are stored as strings: "int","str","*void","array<i32>",etc. */
 typedef char* TypeStr;
 
-/* ── AST node kinds ─────────────────────────────────────────────── */
 typedef enum {
     ND_LITERAL_INT, ND_LITERAL_FLOAT, ND_LITERAL_STR, ND_LITERAL_BOOL,
     ND_VARIABLE,
-    ND_BINARY,    /* +,-,*,/,%,**,&,|,^,<<,>> */
-    ND_COMPARE,   /* ==,!=,<,>,<=,>= */
-    ND_LOGICAL,   /* and,or,not */
+    ND_BINARY,
+    ND_COMPARE,
+    ND_LOGICAL,
     ND_ASSIGN,
     ND_RETURN,
     ND_IF,
@@ -66,8 +60,8 @@ typedef enum {
     ND_BREAK,
     ND_CONTINUE,
     ND_CALL,
-    ND_FIELD,     /* obj.field */
-    ND_INDEX,     /* arr[idx] */
+    ND_FIELD,
+    ND_INDEX,
     ND_ARRAY_LIT,
     ND_DEREF,
     ND_ADDR,
@@ -81,67 +75,47 @@ typedef enum {
 typedef struct AstNode AstNode;
 typedef VEC(AstNode*) NodeVec;
 
-/* ── parameter: (name, type_str) ───────────────────────────────── */
 typedef struct { char *name; TypeStr type; } Param;
 typedef VEC(Param) ParamVec;
 
-/* ── match case ─────────────────────────────────────────────────── */
 typedef struct {
-    NodeVec vals;   /* empty = default */
+    NodeVec vals;
     NodeVec body;
 } MatchCase;
 typedef VEC(MatchCase) CaseVec;
 
-/* ── AstNode ────────────────────────────────────────────────────── */
 struct AstNode {
     NodeKind kind;
     int line;
     union {
-        /* literals */
         int64_t  ival;
         double   fval;
-        char    *sval;   /* str literal or variable name */
-        /* binary / compare / logical / walrus */
+        char    *sval;
         struct { char *op; AstNode *left, *right; } binop;
-        /* assign */
         struct { AstNode *target; AstNode *value; TypeStr var_type; } assign;
-        /* return */
         struct { AstNode *value; bool is_endofcode; } ret;
-        /* if */
         struct { AstNode *cond; NodeVec then, els; } ifst;
-        /* while */
         struct { AstNode *cond; NodeVec body; } whl;
-        /* for - C-style or iterator */
         struct {
-            AstNode *init, *cond, *post;        /* C-style */
-            char *iter_var; AstNode *iter_expr; /* for-in */
+            AstNode *init, *cond, *post;
+            char *iter_var; AstNode *iter_expr;
             NodeVec body;
         } forl;
-        /* call */
         struct { AstNode *func; NodeVec args; } call;
-        /* field access */
         struct { AstNode *obj; char *field; } fld;
-        /* array index */
         struct { AstNode *arr; AstNode *idx; } idx;
-        /* array literal */
         struct { NodeVec elems; TypeStr elem_type; bool is_struct_init; } arlit;
-        /* deref / addr-of */
         AstNode *inner;
-        /* cast */
         struct { AstNode *expr; TypeStr target; } cast;
-        /* sizeof */
         struct { bool is_type; TypeStr type_s; AstNode *expr; } szof;
-        /* inline asm */
         char *asm_code;
-        /* match */
         struct { AstNode *expr; CaseVec cases; } match;
     };
 };
 
-/* ── top-level declarations ─────────────────────────────────────── */
 typedef struct {
     char *name;
-    char *value;   /* field decorator arg if present */
+    char *value;
 } Decorator;
 typedef VEC(Decorator) DecorVec;
 
@@ -149,7 +123,7 @@ typedef struct {
     char *name;
     char *field;
     char *type;
-    char *value;   /* optional default / enum value */
+    char *value;
 } StructField;
 typedef VEC(StructField) FieldVec;
 
@@ -157,7 +131,7 @@ typedef struct {
     char *name;
     FieldVec fields;
     DecorVec decorators;
-    bool is_enum;                /* true → fields are enum members */
+    bool is_enum;
 } StructDef;
 typedef VEC(StructDef) StructVec;
 
@@ -182,7 +156,7 @@ typedef VEC(GlobalVar) GlobVec;
 
 typedef struct {
     char *module_name;
-    char **items;    /* NULL = import all */
+    char **items;
     int   n_items;
 } Import;
 typedef VEC(Import) ImportVec;
@@ -194,7 +168,6 @@ typedef struct {
     ImportVec imports;
 } Program;
 
-/* ── forward decls for alloc helpers ───────────────────────────── */
 AstNode *node_new(NodeKind k, int line);
 void     node_free(AstNode *n);
 Program *program_new(void);
