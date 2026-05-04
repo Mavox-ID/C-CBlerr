@@ -1,3 +1,8 @@
+/* Rewrited by Mavox-ID | License -> MIT */
+/* https://github.com/Mavox-ID/C-CBlerr  */
+/* Original CBlerr by Tankman02 ->       */
+/* https://github.com/Tankman02/CBlerr   */
+
 #pragma once
 #include <stdint.h>
 #include <stdbool.h>

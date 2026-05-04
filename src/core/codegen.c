@@ -1,3 +1,8 @@
+/* Rewrited by Mavox-ID | License -> MIT */
+/* https://github.com/Mavox-ID/C-CBlerr  */
+/* Original CBlerr by Tankman02 ->       */
+/* https://github.com/Tankman02/CBlerr   */
+
 #include "codegen.h"
 #include <stdlib.h>
 #include <string.h>
@@ -155,7 +160,6 @@ static char *gen_expr(CodeGen *cg, AstNode *n) {
         }
         return strdup(tmp);
     case ND_CALL: {
-        /* special built-ins */
         AstNode *fn=n->call.func;
         const char *fname=NULL;
         if(fn&&fn->kind==ND_VARIABLE) fname=fn->sval;
@@ -567,3 +571,105 @@ char *codegen_generate(Program *prog) {
     free(cg->dyn_names); free(cg->dyn_vals);
     return cg->buf;
 }
+
+void codegen_emit_line(CodeGen *cg, const char *s) { cg_line(cg, s); }
+
+void codegen_emit_block(CodeGen *cg, const char *s) { cg_raw(cg, s); }
+
+char *codegen_get_c_type(const char *flux_type) { return ctype_str(flux_type); }
+
+char *codegen_get_c_declaration(const char *flux_type, const char *varname) {
+    char *ct = ctype_str(flux_type);
+    char buf[512];
+    snprintf(buf, sizeof(buf), "%s %s", ct, varname ? varname : "_");
+    free(ct);
+    return strdup(buf);
+}
+
+void codegen_generate_struct_def(CodeGen *cg, StructDef *s) {
+    if(!s) return;
+    if(s->is_enum) {
+        cg_linef(cg, "typedef enum {");
+        cg->indent++;
+        for(int j=0; j<s->fields.len; j++) {
+            StructField *f = &s->fields.data[j];
+            if(f->value) cg_linef(cg, "%s = %s,", f->name, f->value);
+            else         cg_linef(cg, "%s,", f->name);
+        }
+        cg->indent--;
+        cg_linef(cg, "} %s;", s->name);
+    } else {
+        cg_linef(cg, "struct %s {", s->name);
+        cg->indent++;
+        for(int j=0; j<s->fields.len; j++) {
+            char *ct = ctype_str(s->fields.data[j].type ? s->fields.data[j].type : "int");
+            cg_linef(cg, "%s %s;", ct, s->fields.data[j].name ? s->fields.data[j].name : "_");
+            free(ct);
+        }
+        cg->indent--;
+        cg_line(cg, "};");
+    }
+}
+
+void codegen_generate_global_var(CodeGen *cg, GlobalVar *g) {
+    if(!g) return;
+    char *ct = ctype_str(g->type ? g->type : "int");
+    if(g->value && (g->value->kind == ND_LITERAL_INT  ||
+                    g->value->kind == ND_LITERAL_FLOAT ||
+                    g->value->kind == ND_LITERAL_BOOL)) {
+        char *val = gen_expr(cg, g->value);
+        cg_linef(cg, "%s%s %s = %s;", g->is_const?"const ":"", ct, g->name, val);
+        free(val);
+    } else {
+        cg_linef(cg, "%s%s %s;", g->is_const?"const ":"", ct, g->name);
+    }
+    free(ct);
+}
+
+void codegen_generate_function_signature(CodeGen *cg, FuncDef *f, char *out, int out_sz) {
+    gen_func_sig(cg, f, out, out_sz);
+}
+
+void codegen_generate_function_def(CodeGen *cg, FuncDef *f) {
+    if(!f || f->is_extern) return;
+    char sig[1024]; gen_func_sig(cg, f, sig, sizeof(sig));
+    cg_linef(cg, "%s {", sig);
+    cg->indent++;
+    for(int j=0; j<f->body.len; j++) gen_stmt(cg, f->body.data[j]);
+    const char *rt = f->return_type ? f->return_type : "void";
+    if(strcmp(rt,"void")!=0) {
+        bool has_ret = f->body.len > 0 &&
+                       f->body.data[f->body.len-1] &&
+                       f->body.data[f->body.len-1]->kind == ND_RETURN;
+        if(!has_ret) cg_line(cg, "return 0;");
+    }
+    cg->indent--;
+    cg_line(cg, "}");
+    cg_line(cg, "");
+}
+
+void codegen_generate_statement(CodeGen *cg, AstNode *stmt) { gen_stmt(cg, stmt); }
+
+void codegen_generate_return(CodeGen *cg, AstNode *n) {
+    if(!n || n->kind != ND_RETURN) return;
+    if(n->ret.value) {
+        char *e = gen_expr(cg, n->ret.value);
+        cg_linef(cg, "return %s;", e); free(e);
+    } else { cg_line(cg, "return;"); }
+}
+
+void codegen_generate_assign(CodeGen *cg, AstNode *n) { gen_stmt(cg, n); }
+
+void codegen_generate_if(CodeGen *cg, AstNode *n) { gen_stmt(cg, n); }
+
+void codegen_generate_while(CodeGen *cg, AstNode *n) { gen_stmt(cg, n); }
+
+void codegen_generate_for(CodeGen *cg, AstNode *n) { gen_stmt(cg, n); }
+
+void codegen_generate_match(CodeGen *cg, AstNode *n) { gen_stmt(cg, n); }
+
+void codegen_generate_enum(CodeGen *cg, StructDef *s) {
+    codegen_generate_struct_def(cg, s);
+}
+
+char *codegen_generate_expression(CodeGen *cg, AstNode *expr) { return gen_expr(cg, expr); }
