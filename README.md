@@ -9,7 +9,7 @@ This version is the fully rewritten **C** implementation (no Python runtime requ
 CBlerr/
 ├── src/
 │   ├── cblerr.c               Compiler entry point
-│   ├── bin/                   Build output (cblerr / cblerr.exe)
+│   ├── bin/                   Build output (CBlerr / CBlerr.exe)
 │   └── core/
 │       ├── ast.h              AST node types & token definitions
 │       ├── lexer.c/h          Tokenizer
@@ -39,58 +39,34 @@ Download zip in `https://github.com/Mavox-ID/C-CBlerr`.
 
 ### Linux
 ```bash
-make          # produces src/bin/cblerr
+make          # produces src/bin/CBlerr
 ```
-Requires: `gcc` or `clang`.
+Requires: `gcc` or `clang` && `UPX` (If you have and need a small size binary file CBlerr size)
 
 ### Windows (MinGW-w64)
 ```cmd
-build.bat     :: produces src\bin\cblerr.exe
+build.bat     :: produces src\bin\CBlerr.exe
 ```
-Requires MinGW-w64 with `gcc` in PATH.
+Requires MinGW-w64 with `gcc` in PATH && `UPX` (If you have and need a small size binary file CBlerr size)
 
 ## Using the Compiler
 
 ```bash
-./CBlerr source.cbl               # compile → ./source (Linux) or source.exe (Win)
+./CBlerr source.cbl               # compile >GOT? ./source (Linux) or source.exe (Win)
 ./CBlerr source.cbl -o myapp      # custom output name
 ./CBlerr source.cbl -c            # keep generated .c file
 ./CBlerr source.cbl --clang       # force Clang
 ./CBlerr source.cbl --stack-size 8M
 ```
 
-## CBlerr Syntax Check
+## Run a first app in CBlerr!
+
+### CBlerr Hello World!
 
 ```cbl
-# Variable declaration
-x: int = 42
-name: str = "hello"
+# Hello World in CBlerr (Writen in C)
 
-# Function
-def add(a: int, b: int) -> int:
-    return a + b
-
-# Extern C function
-extern def printf(fmt: *void, ...) -> int
-
-# Struct
-struct Point:
-    x: int
-    y: int
-
-# Control flow
-if x > 0:
-    print(x)
-else:
-    print(0)
-
-while x > 0:
-    x = x - 1
-
-for i in 0..10:
-    print(i)
-
-# Types: int i8 i16 i32 i64 u8 u16 u32 u64 float f64 bool str void *T array<T>
-# Operators: + - * / % ** and or not == != < > <= >= as sizeof
-# Special: asm("...") endofcode
+def main() -> int:
+    printf("Hello World!");
+    return 0
 ```
